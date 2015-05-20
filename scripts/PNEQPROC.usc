@@ -1,0 +1,150 @@
+'This script is the NTAFTERSCRIPT entry point for progress notes.
+'SCRIPT: pneentry
+'AUTHOR: BOBBY DORRIS
+'DATE:	09/22/2004	Initial program
+'		01/16/2006 Changed sru to lsru due to installed patches
+'*******************************************************************************
+%version 01.01.00 01/16/2006 Verison 1.01
+%desc This script is the NTAFTERSCRIPT entry point for progress notes.
+'%include c_incmaps
+
+'NOTE: variables are defined and called BY NAME not order!!
+Start pneqproc(qfile, pfile)
+
+'%include c_cldef
+'**********************************VARIABLE DELCARATIONS************************
+qfile			is alpha	'qproc file
+pfile			is alpha	'parm file containing notetype
+
+client_id		is alpha
+lsru			is binary
+sdate			is date
+staff			is alpha
+cldur			is time
+stime			is time
+location		is alpha
+sdur			is time
+sac				is binary
+thertype		is alpha
+recipient		is alpha
+attendance		is alpha
+lof				is alpha
+
+staff_id		is alpha
+s.ln			is alpha
+s.fn			is alpha
+
+'EVENT SERVICE DSTS
+e.date		is date		'EVENT DATE DST
+e.staff		is alpha	'EVENT STAFF DST
+e.case.no	is alpha	'EVENT CASE # DST
+e.ser		is binary	'EVENT SERVICE DST
+e.start		is time		'EVENT START TIME DST
+e.dur		is time		'EVENT DURATION DST
+e.cl.dur	is time		'EVENT CLIENT DURATION DST
+e.ru		is binary	'EVENT RU DST
+e.loc		is alpha	'EVENT LOCATION CODE DST
+e.lof		is alpha	'EVENT LOF DST
+e.recip		is alpha	'EVENT RECIPENT CODE DST
+e.att		is alpha	'EVENT ATTENDANCE CODE DST
+e.no.rec	is binary	'EVENT NUMBER OF RECIPENTS DST
+
+rc				is binary
+title			is alpha
+option			is alpha
+string			is alpha
+notetype		is alpha
+rtrncode		is alpha
+entrypoint		is alpha
+tempdir			is alpha
+filename		is alpha
+tempfile		is alpha
+outputline		is alpha
+fields[]		is alpha
+'*****************************************PROCEDURE SECTION*********************
+
+if $regid !dp then
+	$brmsg("You must specify a client first!", 1, "W")
+	return
+endif
+
+staff_id = $operstaffid
+rc = $dbread(3, staff_id, s.fn, s.ln)
+staff = s.fn + " " + s.ln
+
+client_id = $regid
+entrypoint = "0"
+title = "HRSA Progress Note"
+thertype = "P"
+recipient = "1"
+attendance = "1"
+location = "1"
+tempfile = $sysname + "/W/" + $oper + "." + $pid
+
+'Call program to validate event information
+call "PNEENTRY1" (title, client_id, option, pfile, sdate, staff,
+				  cldur, lsru, stime, location, sdur, sac, thertype,
+				  recipient, attendance, rtrncode, entrypoint)
+
+if rtrncode = "Y" then
+	return
+else
+'write to temp file using pid
+	rc = $openfile( 1 , tempfile, "O")				' Open the file for Output
+	fields[01]	= sdate
+	fields[02]	= staff_id
+	fields[03]	= stime
+	fields[04]	= cldur
+	fields[05]	= lsru
+	fields[06]	= sac
+	fields[07]	= location
+	fields[08]	= recipient
+	fields[09]	= attendance
+	fields[10]	= pfile
+	(void) $putds( fields[], OutputLine, x"2c")		' Build output record
+	(void) $writefile(1, OutputLine)				' Write out the Record
+	rc = $closefile( 1 )							' Close the file for Output
+endif
+
+call "eBASE_qproc" (pfile,,,rc,qfile)
+
+if rc != 0 then
+'cleanup temp file then
+	goto DELETEFILE
+endif
+
+GETFILE:
+	rc = $openfile( 1 , tempfile, "I")				' Open the file for Output
+	rc = $readfile(1, OutputLine)				' Write out the Record
+	rc = $getds( fields[], OutputLine, x"2c")		' Build output record
+	rc = $closefile( 1 )							' Close the file for Output
+
+	e.case.no = client_id
+	e.date = fields[01]
+	e.staff = fields[02]
+	e.start = fields[03]
+	e.cl.dur = fields[04]
+	e.dur = fields[04]
+	e.ru = fields[05]
+	e.ser = fields[06]
+	e.loc = fields[07]
+	e.recip = fields[08]
+	e.att = fields[09]
+	e.no.rec = 1
+
+	rc = $insertevent(e.case.no, e.staff, e.date, e.start, e.ser, e.ru,
+						e.cl.dur, e.dur, e.loc, e.recip, e.att, e.no.rec)
+	if rc > 0 then
+		string = "Error inserting event. (Error = " + $format(rc, "ZZ9") + 
+				 "); Date = " + $format(e.date, "MM/DD/YY") + "; " + 
+				 "Staff = " + e.staff + "."
+		$brmsg(string, 1, "W", "ERROR")
+	endif
+
+DELETEFILE:
+	rc = $filedelete(tempfile)						' Delete the Temp file
+	return
+'=================================== end =========================================
+end pneqproc
+'%include c_func-lib
+

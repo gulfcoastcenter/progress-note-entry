@@ -1,0 +1,668 @@
+'This script is the NTAFTERSCRIPT entry point 1 for progress notes.
+'SCRIPT: pneentry1
+'AUTHOR: BOBBY DORRIS
+'DATE:   09/22/2004  Initial program
+'*******************************************************************************
+'RLE 20090814  Removed trace
+'              added %maptest
+'RLE 20100707 .002 removed includes
+'             misc formatting
+'             fixed style/header include in func
+'RLE 20100715 .003 time logging
+'RLE 20101011 .004 future time warning
+'RLE 20101020 .005
+'  - moved future time to callpoint 3
+'  - misc code formatting and cleanup
+'RLE 20110609 .006
+'  - fixed start time and duration not being updated by the PNEWARNFUTURE script
+'TJM 20120326 .007
+'  - Added 'REDISPLAY' parm to allow parms decide to re show a note snapshot for printing or not
+
+%version 01.0.007 03/26/12 GCC
+%desc This script is the NTAFTERSCRIPT entry point 1 for progress notes.
+%desc It is used to validate event entry information.
+
+%maptest
+%allow_nonmapped_io
+
+start PNEENTRYUA (title, client, sac, sdate, stime, staff, parmfile, cldur, lsru,
+              location, sdur, recipient, attendance, rtrncode, gennote, ntopt[], objinfarr1[]) by name
+
+%include c_cldefLL
+%include c_clgetLL
+
+'%include c_incmaps
+'**********************************VARIABLE DELCARATIONS************************
+'   rc             is b
+'   parmfile       is x
+'   client         is x
+'   title          is x
+
+   staff          is alpha
+   sdate          is date
+   cldur          is time     $allowupdate(cldur)
+   sdur           is time     $allowupdate(sdur)
+   stime          is time     $allowupdate(stime)
+
+   lsru           is binary
+   sac            is b
+   location       is alpha
+   recipient      is alpha
+   rtrncode       is X
+   attendance     is X
+   ntopt[]        is alpha $allowupdate(ntopt[])
+   gennote        is alpha $allowupdate(gennote)
+   objinfarr1[]   is alpha $allowupdate(objinfarr1[])
+
+   allowable_days is numeric  allowable_days = 3
+   dateok         is alpha
+
+   string         is alpha
+   err-msg[]      is alpha
+   staff_id       is alpha
+   snapid         is x
+
+   subtitle       is x
+   t1             is x
+   cnt            is i
+   notetype       is alpha
+   continue       is alpha
+   cnp_ok         is alpha
+   no_show        is alpha
+   cancellation   is alpha
+   alt_sac        is alpha
+   tracefile      is alpha
+   lib            is binary    'LIBRARY
+   lib_groups     is binary
+'   snap_handle    is x
+'
+'   %common snap_handle
+'   %global snap_handle
+
+$setstyle(".sb1", "font-family:times new roman", "font-size:12pt",
+              "color:red", "font-weight:bold")
+
+rc = $regloadlib(lib, "lib_USREVENT")
+staff_id = $operstaffid
+
+select $callpoint
+   case 1
+      rc = $getparm( ,parmfile, "NOTETYPE", notetype)
+      gosub Check_Rule
+      if $returnerr != "Y" then
+         call "PNEENTRY1A" (parmfile, gennote, ntopt[], rtrncode)
+      endif
+   case 2
+   case 3
+      '*warn for future event times
+      call "PNEWARNFUTURE" (parmfile,client,sdate,stime,sdur,sac,lsru,cldur)
+      if $returnerr = "Y" then
+         return
+      endif
+   case 4 or 5
+      if lib:check_parm(parmfile, "REDISPLAY") = "Y" then
+         snapid = snap_handle:sn_getsnapid()
+         snap_handle:sn_viewsnap(snapid)
+      endif
+
+      '*future time logging
+      call "PNELOGTIME" (parmfile,client,sdate,stime,sdur,sac,lsru)
+      '*travel event creation
+      call "PNEENTRY5A" (parmfile, client, sdate, stime, sdur, staff, lsru)
+endselect
+
+return
+
+
+'****************************** begin Check_Rule Subroutine ********************
+Check_Rule:
+
+   rc = chk_after_hours(stime)
+   if rc != 0 then
+      $returnerr = "Y"
+      goback
+   endif
+
+'Is the service date within the allowable days or staff has override
+'authroization.
+   dateok = {lib}check_date(allowable_days, sdate)
+
+   if dateok != "Y" then
+      $errmsg1 = "Service Date exceeds authorized entry time."
+      rc = 97
+      $returnerr = "Y"
+      goback
+   endif
+   rc = check_pne_rules2(notetype, sdate, cldur, sdur, stime, sac, lsru, client)
+
+'If current UA does not allow this type of service, rc=98. Display message and
+'prevent event entry.
+   if rc != 0 and rc != 98 then
+      $returnerr = "Y"
+      goback
+   endif
+
+'If event info is correct (rc=0) or an alternate sac is used (rc=99), then
+'check for overlapping event.
+   if rc = 0 or rc = 99 or rc = 98 then
+      if rc = 99 or rc = 98 then
+         alt_sac = "Y"
+      endif
+      rc = overlap_pne(sac, stime, cldur, sdate, staff_id,
+                       client, notetype,)
+   endif
+
+'If event info is ok and no overlapping events, then check for acceptable
+'combinations of loc, att, and recp codes.
+   if rc = 0 then
+      if cnp_ok = "Y" and attendance != "9" then
+         $errmsg1 = "Attendance must be 9 client not present."
+         rc = 9
+      elseif no_show = "Y" and attendance != "6" then
+         $errmsg1 = "Attendance must be 6 for no show only note."
+         rc = 9
+      elseif cancellation = "Y" and (attendance != "4" or attendance != "5")then
+         $errmsg1 = "Attendance must be 4 or 5 for cancellation only note."
+         rc = 9
+      elseif (attendance < "1" or attendance > "6") and cnp_ok != "Y" then
+         $errmsg1 = "Attendance code must be 1-6 for client related event."
+         rc = 9
+      elseif recipient < "1" or recipient > "6" then
+         $errmsg1 = "Recipient code must be 1-6 for client related event."
+         rc = 9
+      elseif (attendance >= "4" and attendance <= "6") and cldur > 0:00 then
+         $errmsg1 = "Duration must be zero for attendance code 4-6."
+         rc = 9
+      elseif attendance < "4" and (cldur = 0:00 or cldur !dp) then
+         $errmsg1 = "Duration must be greater than 0:00 for attendance " +
+                   "of 1, 2, 3."
+         rc = 9
+      elseif location = "8" and (attendance < "1" or attendance > "3") and
+            attendance != "6" then
+         $errmsg1 = "Attendance must be a 1, 2, 3 or 6 for telephone calls."
+         rc = 9
+      elseif attendance = "9" and cldur > 0:00 then
+         $errmsg1 = "Duration must be zero for attendance code 9."
+         rc = 9
+      endif
+   endif
+goback
+
+end PNEENTRYUA
+
+%include c_func-libLL
+
+dynamic FUNCTION chk_after_hours(stime) is integer
+   stime is time
+   rc    is binary
+   t1    is x
+   string   is alpha
+
+   if stime < 7:00 then
+
+      $submitopt("on","OK")
+      $cancelopt("on","Back")
+      $form("timechk")
+      %include c_stylesheet
+      %include c_clformheaderLL
+      $table(t1)
+         $row()
+            $col("center")$text("You have entered a start time of", "datatag")
+         $row()
+            string = $format(stime, "HH:MM AP")
+            $col("center")$text(string, "error")
+         $row()
+            $col("center")$text("which is earlier than 7:00 am.", "datatag")
+         $row()
+            $col("center")$text("If this is correct, select OK.", "datatag")
+      $endtable(t1)
+      $sendform("timechk")
+
+      if $endbutton = "CANCEL" then
+         $returnerr = "Y"
+         rc = 1
+      endif
+   else
+      $returnerr = "N"
+      rc = 0
+   endif
+
+   chk_after_hours = rc
+
+end chk_after_hours
+
+
+'****************************** check_pne_rules2 function ***********************
+'checks events against the event entry rules.
+function check_pne_rules2(notetype, sdate, cldur, sdur, stime, pne_sac, pne_ru, client) is integer
+
+notetype    is alpha
+lib            is binary
+cldur       is time
+sdate       is date
+sdur        is time
+stime       is time
+client      is alpha
+rc              is binary   'RETURN CODE
+rc1             is binary   'RETURN CODE Event Entry Rule Read & Generic
+cnt            is integer
+i           is integer
+sp1[]       is alpha
+continue    is alpha
+status         is binary
+
+'DST
+pne.id         is alpha
+pne.type    is alpha
+pne.desc    is alpha
+pne.carecode   is alpha
+pne.clstdur    is alpha
+pne.maxdur     is time
+pne.minbill    is time
+pne.loc        is alpha
+pne.recp    is alpha
+pne.attend     is alpha
+pne.caredur    is binary
+pne.status     is alpha
+
+pne.sac.rec    is header
+pne.sac        is binary
+pne.ru.rec     is header
+pne.ru         is binary
+pne.con.rec    is header
+pne.con.sac    is binary
+pne.group      is alpha
+pne.sup.req    is alpha
+pne.sup.diff   is alpha
+
+pne.ua.req     is alpha
+pne.sp         is alpha
+pne.alt.sac    is binary
+pne.tp.req     is alpha
+
+'VARIABLES
+pne_clstdur    is alpha
+pne_maxdur     is time
+pne_alt_sac    is binary
+pne_aloc    is alpha
+pne_status     is alpha
+pne_type    is alpha
+pne_sac        is binary
+pne_ru         is binary
+pne_id         is alpha
+'****************************PROCEDURE SECTION**********************************
+$looplimit = 0
+   rc = $regloadlib(lib, "lib_USREVENT")
+   $clear(sp1[], pne_aloc, pne_status, pne_type, $errmsg1, $errmsg2)
+
+   rc1 = $dbstart(59)
+   rc1 = $dbreadnext(59, pne.id,pne.type, pne.desc, pne.carecode, pne.status,
+                   pne.clstdur, pne.maxdur, pne.minbill,
+                   pne.sac.rec, pne.sac, pne.ru.rec, pne.ru,
+                   pne.ua.req, pne.sp, pne.alt.sac, pne.tp.req)
+
+   pne_type = pne.type
+   pne_status = pne.status
+
+   if rc1 < 3 then
+      continue = "Y"
+   endif
+
+   rc = 1
+
+   do while (continue = "Y")
+      if pne.type dp and pne.type = notetype and pne_status != "A" then
+         status = 8
+         continue = "N"
+      elseif pne.type = notetype then
+         continue = "N"
+         rc = list_sacs(pne_sac, pne.id, pne.sac.rec, pne.sac, pne.alt.sac)
+         if rc = 0 then
+            rc = list_rus(pne_ru, pne.id, pne.ru.rec, pne.ru)
+            if rc != 0 then
+               status = 3
+            endif
+         else
+            status = 2
+         endif
+         if rc = 0 then
+            pne_clstdur = pne.clstdur
+            pne_maxdur = pne.maxdur
+            if pne.ua.req = "Y" then
+               status = 5
+               pne_aloc = {lib}get_valid_ua(client,sdate)
+               if pne_aloc !dp then
+                  pne_alt_sac = pne.alt.sac
+               else
+                  pne_alt_sac = pne.alt.sac
+                  status = 6
+               endif
+            endif
+         endif
+         if status = 6 then
+            cnt = 1
+            i = 1
+            do while cnt <= $len(pne.sp)
+               sp1[i] = $parse(pne.sp, cnt, ",")
+               if sp1[i] = pne_aloc then
+                  status = 7
+               endif
+               i++
+            enddo
+         endif
+      endif
+      if continue = "Y"
+         rc1 = $dbreadnext(59, pne.id, pne.type, pne.desc, pne.carecode, pne.status,
+                         pne.clstdur, pne.maxdur, pne.minbill,
+                         pne.sac.rec, pne.sac, pne.ru.rec, pne.ru,
+                         pne.ua.req, pne.sp, pne.alt.sac, pne.tp.req)
+         if rc1 = 3 and pne.id !dp then
+            continue = "N"
+            status = 1
+         else
+            pne_type = pne.type
+            pne_status = pne.status
+            pne_id = pne.id
+         endif
+      endif
+   enddo
+
+   '****  Assign Return Code and Any Appropriate Error Values  ****
+   select status
+      case 1                                                   ' No note type found
+         $errmsg1 = "No event rules defined for note type!" +
+                   " Contact the MIS Department!"
+         $errmsg2 = "Report (" + notetype + ") note type not defined!"
+         rc = 5
+      case 2                                                   ' Invalid Service Code
+         $errmsg1 = "Incorrect Service Activity Code for {" + notetype + "}"
+         $errmsg2 = "      Select from one of the following!"
+         cnt = 1
+      case 3                                                   ' Invalid Reporting Unit
+         $errmsg1 = "Incorrect RU for Service Activity Code for {" + notetype + "}"
+         $errmsg2 = "      Select from one of the following!"
+         cnt = 1
+         rc = 1
+      case 4                                                   ' SC & RU ok, UA not required
+         rc = 0
+      case 5                                                   ' SC & RU ok, UA required - Not Valid
+         pne_sac = pne_alt_sac
+         status = 99
+      case 6                                                   ' SC & RU ok, UA required - SP not valid
+         $errmsg1 = "The client's current assessment does not allow for " +
+                   " this note type!"
+         $errmsg2 = "Select cancel and enter correct note type"
+         pne_sac = pne_alt_sac
+         rc = 98
+      case 7                                                   ' SC & RU ok, UA required - Valid
+         rc = 0
+      case 8                                                   ' SC & RU ok, UA required - SP not valid
+         $errmsg1 = "The Note Event rule is Inactive!" +
+                   " Contact your supervisor for alternate note type!"
+         $errmsg2 = "Report (" + notetype + ") note type not active!"
+         rc = 5
+      case other                                               ' Error Occured
+         rc = 999
+   endselect
+
+'Client & Staff time do not match
+   if (rc = 0 or rc = 99) and pne_clstdur = "Y" and cldur != sdur then
+      $errmsg1 = "Client duration does not match staff duration!"
+      rc = 3
+   elseif (rc = 0 or rc = 99) and pne_maxdur dp and cldur > pne_maxdur then
+      $errmsg1 = "Duration exceeds maximum time for service activity code!"
+      rc = 4
+   endif
+   if rc = 999 then
+      rc = 0
+   endif
+
+   check_pne_rules2 = rc
+
+end check_pne_rules2
+
+function list_rus(pne_ru, pne.id, pne.ru.rec, pne.ru) is integer
+
+pne.id         is alpha
+pne.ru         is binary
+pne_ru         is binary
+pne.ru.rec     is header
+rc          is binary
+cnt            is binary
+
+   rc = 0
+   cnt = 0
+   $clear($errmsg3, $errmsg4)
+
+   do while (rc < 2)
+      if pne_ru = pne.ru then 'and pne.ru >= 5000 and pne.ru < 7000
+         rc = 2
+         $clear($errmsg3)
+      else
+         rc = $dbreadnextdst(59, pne.id, pne.ru.rec, pne.ru)
+         cnt++
+         if cnt < 13 then
+            if $errmsg3 dp and rc < 2 then
+               $errmsg3 = $errmsg3 + ","
+            endif
+            $errmsg3 = $errmsg3 + $format(pne.ru, "ZZZ9")
+         else
+            if $errmsg4 dp and rc < 2 then
+               $errmsg4 = $errmsg4 + ","
+            elseif rc < 2
+               $errmsg4 = ","
+            endif
+            $errmsg4 = $errmsg4 + $format(pne.ru, "ZZZ9")
+         endif
+      endif
+   enddo
+
+   if $errmsg3 !dp
+      rc = 0
+   endif
+
+   list_rus = rc
+end list_rus
+
+function list_sacs(pne_sac, pne.id, pne.sac.rec, pne.sac, pne.alt.sac) is integer
+
+pne.id         is alpha
+pne.sac.rec    is header
+pne_sac        is binary
+pne.sac        is binary
+pne.alt.sac    is binary
+rc          is binary
+
+
+
+   do while (rc < 2)
+      if pne.sac = pne_sac or pne.alt.sac = pne_sac then
+         rc = 2
+         $clear($errmsg3)
+      else
+         rc = $dbreadnextdst(59, pne.id, pne.sac.rec, pne.sac)
+         if $errmsg3 dp and rc < 2 then
+            $errmsg3 = $errmsg3 + ","
+         endif
+         $errmsg3 = $errmsg3 + $format(pne.sac, "ZZZ9" )
+      endif
+   enddo
+   if $errmsg3 !dp
+      rc = 0
+   endif
+
+   list_sacs = rc
+end list_sacs
+
+'******************************************************************************
+'THIS FUNCTION CHECKS FOR OVERLAPPING EVENTS BASED ON THE SERVICE DATA PASSED
+'TO THE FUNCTION.  THE FUNCTION RETURNS ERR-MSG AS EITHER DNP OR WITH AN
+'ERROR MESSAGE.
+'AUTHOR: Bobby Dorris
+'DATE: 9-27-2004
+'******************************************************************************
+function overlap_pne(e_ser, e_start, e_dur, e_date, e_staff, e_case_no,
+                notetype, e_errkey) is integer
+
+'Variables
+e_ser    is binary
+e_start     is time      'START TIME COMPARISON VARIABLE
+e_dur       is time      'DURATION COMPARISON VARIABLE
+e_date      is date      'DATE COMPARISON VARIABLE
+e_staff     is alpha     'EVENT STAFF ID DST
+e_case_no   is alpha  'EVENT CLIENT ID DST
+e_errkey is alpha
+notetype is alpha
+
+e.case.no   is alpha  'EVENT CLIENT ID DST
+e.ser       is binary    'EVENT SERVICE DST
+e.staff     is alpha     'EVENT STAFF ID DST
+e.date      is date      'EVENT DATE DST
+e.start     is time      'EVENT START TIME DST
+e.cl.dur       is time      'EVENT DURATION DST
+e.dur       is time      'EVENT DURATION DST
+e.ru     is binary
+
+s.fn     is alpha
+s.ln     is alpha
+
+e_start2    is time      'START TIME COMPARISON VARIABLE
+e_end       is time      'END TIME COMPARISON VARIABLE
+e_end2      is time      'END TIME COMPARISON VARIABLE
+e_dur2      is time      'DURATION COMPARISON VARIABLE
+end_time is time
+
+rc          is binary    'RETURN CODE
+rs          is binary    'RETURN CODE
+ecode       is binary
+staff    is alpha
+staff1      is alpha
+
+e_group     is alpha
+con_sac[]   is binary
+cscnt    is integer
+string         is alpha
+consac      is integer
+lib         is binary    'LIBRARY
+
+
+$clear($errmsg1, $errmsg2, $errmsg3)
+
+e_end = e_start + e_dur
+ecode = 0
+rc = 0
+
+rc = $regloadlib(lib, "lib_USREVENT")
+
+rc = {lib}pne_consaclist(notetype, con_sac[])
+e_group = {lib}pne_group(notetype)
+
+if e_staff dp and e_group != "Y" then
+   staff1 = $dct(2071, $oper, "D")
+
+   rc = $startevents(e_staff,,e_date)
+   rc = $readnextevent(e.date, e.start, e.cl.dur, e.ser, e.ru)
+
+   do while e.date = e_date and rc = 0
+      if e.ser < 9000 then
+         cscnt = 1
+         consac = 0
+         if e.start >= e_start and e.start < e_end and e.cl.dur > 0 and
+            e_dur > 0 and e_errkey != $erkey and consac = 0 and
+            e.ser != 2143 and e.ser != 2144 then
+            ecode = 11
+            end_time = e.start + e.cl.dur
+            $errmsg1 = "ERROR - THIS EVENT OVERLAPS AN EXISTING EVENT FOR THE STAFF!"
+            $errmsg2 = "Date: " + $format(e.date, "MM/DD/YYYY") +
+                     " - Time: " + $format(e.start, "HH:MM") +
+                     " to " + $format(end_time, "HH:MM")
+            $errmsg3 =  " - Dur: " + $format(e.cl.dur, "HH:MM") +
+                     " - Sac: " + $format(e.ser, "ZZZZ") +
+                     " - RU: " + $format(e.ru, "ZZZZ")
+         endif
+         e_start2 = e.start
+         e_dur2 = e.cl.dur
+         e_end2 = e.start + e_dur2
+
+         if e_start >= e_start2 and e_start < e_end2 and e_dur2 > 0 and
+               e_dur > 0 and e_errkey != $erkey and consac = 0 and
+            e.ser != 2143 and e.ser != 2144 then
+            ecode = 11
+            end_time = e.start + e.cl.dur
+            $errmsg1 = "ERROR - THIS EVENT OVERLAPS AN EXISTING EVENT FOR THE STAFF!"
+            $errmsg2 = "Date: " + $format(e.date, "MM/DD/YYYY") +
+                     " - Time: " + $format(e.start, "HH:MM") +
+                     " to " + $format(end_time, "HH:MM")
+            $errmsg3 =  " - Dur: " + $format(e.cl.dur, "HH:MM") +
+                     " - Sac: " + $format(e.ser, "ZZZZ") +
+                     " - RU: " + $format(e.ru, "ZZZZ")
+         endif
+      endif
+      rc = $readnextevent(e.date, e.start, e.ser, e.cl.dur, e.ru)
+   enddo
+   if $len($errmsg1) > 0 gosub TheEnd endif
+endif
+
+if e_case_no = "000101" then
+   goto TheEnd
+endif
+
+
+rc = $startevents(,e_case_no,e_date)
+rc = $readnextevent(e.date, e.start, e.cl.dur, e.ser, e.ru, e.staff)
+rs = $dbread(3, e.staff, s.fn, s.ln)
+
+do while e.date = e_date and rc = 0
+   if e.ser < 9000 then
+      cscnt = 1
+      consac = 0
+      do while cscnt <= $maxarray(con_sac[])
+         if con_sac[cscnt++] = e.ser then
+            consac = 1
+         endif
+      enddo
+      if e.start >= e_start and e.start < e_end and e.cl.dur > 0 and
+         e_dur > 0 and e_errkey != $erkey and consac = 0 and
+         e.ser != 2143 and e.ser != 2144 then
+         ecode = 12
+         end_time = e.start + e.cl.dur
+         $errmsg1 = "ERROR - THIS EVENT OVERLAPS AN EXISTING EVENT FOR THE CLIENT!"
+         $errmsg2 = "Date: " + $format(e.date, "MM/DD/YYYY") +
+                  " - Time: " + $format(e.start, "HH:MM") +
+                  " to " + $format(end_time, "HH:MM")
+         $errmsg3 =  " - Dur: " + $format(e.cl.dur, "HH:MM") +
+                  " - Sac: " + $format(e.ser, "ZZZZ") +
+                  " - RU: " + $format(e.ru, "ZZZZ") +
+                  " - Staff: " + s.fn + " " + s.ln + "(" + e.staff + ")"
+      endif
+      e_start2 = e.start
+      e_dur2 = e.cl.dur
+      e_end2 = e.start + e_dur2
+
+      if e_start >= e_start2 and e_start < e_end2 and e_dur2 > 0 and
+         e_dur > 0 and e_errkey != $erkey  and consac = 0 and
+         e.ser != 2143 and e.ser != 2144 then
+         ecode = 12
+         end_time = e.start + e.cl.dur
+         $errmsg1 = "ERROR - THIS EVENT OVERLAPS AN EXISTING EVENT FOR THE CLIENT!"
+         $errmsg2 = "Date: " + $format(e.date, "MM/DD/YYYY") +
+                  " - Time: " + $format(e.start, "HH:MM") +
+                  " to " + $format(end_time, "HH:MM")
+         $errmsg3 =  " - Dur: " + $format(e.cl.dur, "HH:MM") +
+                  " - Sac: " + $format(e.ser, "ZZZZ") +
+                  " - RU: " + $format(e.ru, "ZZZZ") +
+                  " - Staff: " + s.fn + " " + s.ln + "(" + e.staff + ")"
+      endif
+   endif
+   rc = $readnextevent(e.date, e.start, e.ser, e.cl.dur, e.ru, e.staff)
+   rs = $dbread(3, e.staff, s.fn, s.ln)
+enddo
+
+TheEnd:
+
+   if ecode != 0 then
+      $returnerr = "Y"
+   endif
+
+   overlap_pne = ecode
+end overlap_pne

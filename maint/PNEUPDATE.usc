@@ -1,0 +1,1693 @@
+'This script is used to and update event entry rules to database 59.
+'Registers have auto generated sequentail ids and are indexed by PNE.NOTETYPE
+'
+'SCRIPT: pneupdate
+'AUTHOR: BOBBY DORRIS
+'DATE:	09/23/2004	Initial program
+'
+' Updates:
+'		08/29/2005	Added dst's for UA info
+'		02/15/2007	Added MSA
+' RLE 20100325 + added load_id option to edit a specific note type
+' TJM 20110629 .002 + Added pne.sacverify references.
+' TJM 20120712 .003
+'  + added option argument and
+'  + search functionality using search[] and s_crit[] to define the search dsts and criteria respectively
+'     Search currently builds with parmfile: DXPNEBLD 
+'  - Removed unused individual looping through pne.sac.rec; pne.ru.rec and pne.con.rec in READ subroutine
+' TJM 20130107 .004
+'  + References to new dst PNE.PROJ
+'RLE 20130327 .005
+'  + added looping back for sac/ru/con for excel mode so the data is included.
+'    this looping is still ignored for non-excel reading
+'  - removed $brmsg in READREC for excel runs.  This confuses $filetopc()
+'RLE 20130830 .006
+'  + add pne.trr.sp so both TRR and RDM SP's can be edited together during migration
+'*******************************************************************************
+%version 02.1.006 08/30/13
+
+%desc This script is used to create and update event entry rules in database 59.
+
+start PNEUPDATE(load_id, option)
+'**********************************VARIABLE DELCARATIONS************************
+   load_id     is x
+   option      is x
+
+'DST's
+pne.id			is alpha
+pne.type		is alpha
+pne.desc		is alpha
+pne.osac		is binary
+pne.oru			is binary
+pne.carecode	is alpha
+pne.clstdur		is alpha
+pne.maxdur		is time
+pne.minbill		is time
+pne.loc			is alpha
+pne.recp		is alpha
+pne.attend		is alpha
+pne.caredur		is binary
+
+pne.sac.rec		is header
+pne.sac			is binary
+pne.ru.rec		is header
+pne.ru			is binary
+pne.con.rec		is header
+pne.con.sac		is binary
+pne.group		is alpha
+pne.sup.req		is alpha
+pne.sup.diff	is alpha
+
+pne.ua.req		is alpha
+pne.sp			is alpha
+pne.trr.sp     is x
+pne.alt.sac		is binary
+pne.tp.req		is alpha
+pne.ipc			is alpha
+pne.status		is alpha
+pne.msa			is alpha
+pne.sacverify  is x
+pne.proj       is x
+pne.req.asmt            is x
+
+s.ln			is alpha
+s.fn			is alpha
+
+'VARIABLES
+pne_id[]		is alpha
+pne_type[]		is alpha
+pne_desc[]		is alpha
+pne_osac[]		is binary
+pne_oru[]		is binary
+pne_carecode[]	is alpha
+pne_clstdur[]	is alpha
+pne_maxdur[]	is time
+pne_minbill[]	is time
+pne_loc[]		is alpha
+pne_recp[]		is alpha
+pne_attend[]	is alpha
+pne_caredur[]	is binary
+pne_saclist[]	is dbtext-l
+pne_rulist[]	is dbtext-l
+pne_conlist[]	is dbtext-l
+pne_list[]		is alpha
+pne_proj[]      is x
+pne_req_asmt[]  is x
+
+pne_sac[]		is binary
+pne_sac_uid[]	is numeric
+pne_ru[]		is binary
+pne_ru_uid[]	is numeric
+pne_con_sac[]	is binary
+pne_con_uid[]	is numeric
+
+pne_group[]		is alpha
+pne_sup_req[]	is alpha
+pne_sup_diff[]	is alpha
+
+pne_ua_req[]	is alpha
+pne_sp[]		is alpha
+pne_trr_sp[]   is x
+pne_alt_sac[]	is binary
+pne_tp_req[]	is alpha
+pne_ipc[]		is alpha
+pne_status[]	is alpha
+pne_msa[]		is alpha
+pne_sacverify[]  is x
+list_sac		is alpha
+list_ru			is alpha
+list_consac		is alpha
+
+'PROCEDURE VARIABLES
+rc				is binary
+rc2				is binary
+sort_type[]		is alpha
+string			is alpha    'STAFF NAME STRING
+z				is int
+y				is int
+ccnt			is numeric
+ccnt2			is numeric
+rcnt			is numeric
+lcnt			is numeric
+scnt			is numeric
+dcnt			is numeric
+ucnt			is numeric
+mcnt			is numeric
+snum			is int
+anum			is int
+rv				is binary
+rid				is alpha
+uaradio        	is int
+continue		is alpha
+last_id			is alpha
+continue_u		is alpha
+continue_s		is alpha
+continue_r		is alpha
+continue_c		is alpha
+updflag			is numeric
+editsac			is integer
+editru			is integer
+editcon			is integer
+
+UnixCMD			is alpha
+TempFile		is alpha
+NewTempFile		is alpha
+outputline		is dbtext-l
+fields[]		is alpha
+
+search[]       is x
+s_crit[]       is x
+
+o_excel        is x
+
+'BUTTONS
+add_btn			is alpha
+upt_btn[]		is alpha
+del_btn[]		is alpha
+prt_btn			is alpha
+copy_btn[]		is alpha
+upt_sac			is alpha
+upt_ru			is alpha
+upt_con			is alpha
+del_note[]		is alpha
+del_b			is alpha
+
+'LINKS
+edit_sac[]		is alpha
+edit_ru[]		is alpha
+edit_con[]		is alpha
+update_sac		is alpha
+update_ru		is alpha
+update_con		is alpha
+del_sac[]		is alpha
+del_ru[]		is alpha
+del_con[]		is alpha
+add_sac			is alpha
+add_ru			is alpha
+add_con			is alpha
+
+'*****************************SET FONT STYLES***********************************
+$setstyle(".red", "color:red")
+'****************************PROCEDURE SECTION**********************************
+
+getOPtion(option)
+
+$looplimit = 0
+gosub READREC
+
+if load_id dp then
+   rcnt = $find(load_id,pne_type[])
+   gosub UPDATE
+   return
+endif
+
+continue = "Y"
+do while continue = "Y"
+	$clear(last_id, add_btn, upt_btn[], del_btn[], prt_btn, copy_btn[], del_b,
+		   del_note[])
+
+	$submitopt("off", "Open Excel")
+	$cancelopt("off", "QUIT")
+
+	$form("main")
+	$text("{H1}Progress Note Event Rule {/H1}")
+	$br(2)
+
+	$table("t1")
+	$bstyle("link", "link")
+	$row()
+		$col("center",,,"1","1")
+		$col("center",,,"1","1") $submit(sort_type[1], "TYPE")
+		$col("center",,,"1","1") $submit(sort_type[2], "DESCRIPTION")
+		$col("center",,,"1","1") $submit(sort_type[6], "STATUS")
+		$col("center",,,"1","1") $submit(sort_type[7], "MSA")
+		$col("center",,,"1","1") $submit(sort_type[3], "CARE")
+		$col("center",,,"1","1") $submit(sort_type[5], "IPC Req?")
+		$col("center",,,"1","1") $submit(sort_type[4], "UA Req?")
+		$col("center",,,"1","1") $text("SP","datatag")
+		$col("center",,,"1","1") $text("Group","datatag")
+
+	mcnt = 1
+	do while mcnt <= $maxarray(pne_id[])
+		y = mcnt
+		uaradio = mcnt
+		if pne_status[mcnt] = "I" then
+			$style("red")
+		else
+			$style("normal")
+		endif
+		$row()
+			$col("center")$bstyle("link", "link")
+				$submit(upt_btn[mcnt], "E")
+				$submit(copy_btn[mcnt], "C")
+				$submit(del_btn[mcnt], "D")
+			$col() $text(pne_type[mcnt])
+			$col() $text(pne_desc[mcnt])
+			string = $dct(1044, pne_status[mcnt], "D")
+			$col("center") $text(string)
+			$col("center") $text(pne_msa[mcnt])
+			$col("center") $text(pne_carecode[mcnt])
+			$col("center") $text(pne_ipc[mcnt])
+			$col("center") $text(pne_ua_req[mcnt])
+			$col("center") $text(pne_sp[mcnt])
+			if pne_trr_sp[mcnt] dp then
+			   $text(`" - " + pne_trr_sp[mcnt]`)
+			endif
+			$col("center") $text(pne_group[mcnt])
+		mcnt = mcnt + 1
+	enddo
+	$endtable("t1")
+
+	$br(2)
+	$table("buttons")
+	$row()
+	$row()
+	$bstyle("button", "button")
+	$col("center", , "20%", "4")
+	$submit(prt_btn, "Print")
+	$col("center", , "20%", "4")
+	$submit(add_btn, "Add")
+	$col("center", , "20%", "4")
+	$submit(del_b, "Delete")
+
+	$row()
+	$endtable("buttons")
+
+	$sendform("main")
+	$endform("main")
+
+	if $endbutton = "CANCEL" then
+		continue = "N"
+		return
+	elseif $endbutton = "SUBMIT" then
+	   o_excel = "Y"
+	   gosub READREC
+		gosub EXCEL
+		$clear(o_excel)
+	elseif prt_btn = "Y" then
+		gosub PRTREC
+	elseif add_btn = "Y" then
+		gosub ADDREC
+	elseif del_b = "Y" then
+		rcnt = 1
+		do while rcnt <= $maxarray(del_note[])
+			if del_note[rcnt] = "Y"
+				$dblock()
+				pne.id = pne_id[rcnt]
+				rc = $dbremovereg(59, pne.id)
+				if rc > 0 then
+					string = "There was an error in dbremove.  rc=" +
+							 $format(rc, "ZZZ")
+					$brmsg(string, 1, "W", "ERROR")
+					return
+				endif
+				$brmsg("Deleting Records. Please Wait", 1, "C",)
+				string = "Removing id " + pne.id + "notetype =" +
+						 pne_type[rcnt] + " rcnt=" + $format(rcnt, "ZZZZ")
+				$brmsg(string, 2, "C",)
+				$dbunlock()
+			endif
+			rcnt++
+		enddo
+		gosub READREC
+	else
+		rcnt = 1
+		do while rcnt <= $maxarray(upt_btn[])
+			if upt_btn[rcnt] = "Y"
+				gosub UPDATE
+			endif
+			rcnt++
+		enddo
+		rcnt = 1
+		do while rcnt <= $maxarray(copy_btn[])
+			if copy_btn[rcnt] = "Y"
+				gosub COPYREC
+			endif
+			rcnt++
+		enddo
+		rcnt = 1
+		do while rcnt <= $maxarray(del_btn[])
+			if del_btn[rcnt] = "Y"
+				gosub DELREC
+			endif
+			rcnt++
+		enddo
+		rcnt = 1
+		do while rcnt <= $maxarray(sort_type[])
+			if sort_type[rcnt] = "Y"
+				gosub SORTREC
+			endif
+			rcnt++
+		enddo
+	endif
+
+enddo
+
+'**************************************UPDATE FORM******************************
+UPDATE:
+continue_u = "Y"
+do while continue_u = "Y"
+	ucnt = rcnt
+
+	$clear(upt_sac, upt_ru, upt_con)
+	$submitopt("off", "SAVE")
+	$cancelopt("off", "QUIT")
+
+	$form("upt")
+	$text("{H1}Progress Note Event Rule Update{/H1}")
+	$br(2)
+
+	if $operfal = "9999" then
+	   $fieldset("MIS",,"datatag")
+	   $text(`"DB Register: " + pne_id[ucnt]`)
+	   $endfieldset()
+	endif
+
+	$table("t1")
+
+	$row()
+		$col("left", , "25%")$text("TYPE")
+		$col() $textbox(pne_type[ucnt], ,8, 8)
+	$row()
+		$col("left", , "25%") $text("DESCRIPTION")
+		$col() $textbox(pne_desc[ucnt], ,64, 64)
+	$row()
+		$col("left", , "25%") $text("STATUS")
+		$col() $dropboxdct(pne_status[ucnt], 1044,,,,"Y")
+	$row()
+		$col("left", , "25%") $text("Major Service Area")
+		$col() $dropboxdct(pne_msa[ucnt], 71,,,,"Y")
+	$row()
+		$col("left", , "25%") $text("CARE")
+		$col() $textbox(pne_carecode[ucnt], ,4, 6)
+	$row()
+		$col("left", , "25%") $text("Match Dur?")
+		$col() $dropboxdct(pne_clstdur[ucnt], 29,,,,"Y")
+	$row()
+		$col("left", , "25%") $text("Max Dur")
+		$col() $textbox(pne_maxdur[ucnt],"DUR")
+	$row()
+		$col("left", , "25%") $text("Min Dur")
+		$col() $textbox(pne_minbill[ucnt],"DUR")
+	$row()
+		$col("left", , "25%") $text("Location Code")
+		$col() $textbox(pne_loc[ucnt])
+	$row()
+		$col("left", , "25%") $text("Recipient Code")
+		$col() $textbox(pne_recp[ucnt])
+	$row()
+		$col("left", , "25%") $text("Attendance Code")
+		$col() $textbox(pne_attend[ucnt])
+	$row()
+		$col("left", , "25%") $text("Project Code")
+		$col() $textbox(pne_proj[ucnt])
+	$row()
+		$col("left", , "25%") $text("Care Days")
+		$col() $textbox(pne_caredur[ucnt])
+	$row()
+		$col("left", , "25%") $text("Group")
+		$col() $textbox(pne_group[ucnt], "DCV``29", 1, 5, "Y")
+	$row()
+		$col("left", , "25%") $text("Supervisor Required?")
+		$col() $dropboxdct(pne_sup_req[ucnt], 29,,,,"Y")
+	$row()
+		$col("left", , "25%") $text("Supervisor Must be Different?")
+		$col() $dropboxdct(pne_sup_diff[ucnt], 29,,,,"Y")
+	$row()
+		$col("left", , "25%") $text("Is IPC Required?")
+		$col() $dropboxdct(pne_ipc[ucnt], 29,,,,"Y")
+	$row()
+		$col("left", , "25%") $text("Is Uniform Assessment Required?")
+		$col() $dropboxdct(pne_ua_req[ucnt], 29,,,,"Y")
+	$row()
+		$col("left", , "25%") $text("RDM SP's Allowed:")
+		$col() $textbox(pne_sp[ucnt])
+	$row()
+		$col("left", , "25%") $text("TRR SP's Allowed:")
+		$col() $textbox(pne_trr_sp[ucnt])
+	$row()
+		$col("left", , "25%") $text("Specific Assessment Required:")
+		$col() $textbox(pne_req_asmt[ucnt])
+	$row()
+		$col("left", , "25%") $text("Alternate SAC")
+		$col() $textbox(pne_alt_sac[ucnt],"SAM",,4)
+		$editmsg(pne_alt_sac[ucnt])
+	$row()
+		$col("left", , "25%") $text("Is Treatment Plan Required?")
+		$col() $dropboxdct(pne_tp_req[ucnt], 29,,,,"Y")
+	$row()
+	   $col("left", , "25%") $text("Verify Sac with User?")
+	   $col() $dropboxdct(pne_sacverify[ucnt], 29,,,,"Y")
+	$row()
+	$endtable("t1")
+
+	gosub GETSAC
+	$br(2) 	$bstyle("link", "link") $style("redb") $submit(upt_sac, "SAC")
+	lcnt = 1
+	do while lcnt <= $maxarray(pne_sac[])
+		string = $sam(pne_sac[lcnt], "D")
+		$br() $text(pne_sac[lcnt])$text(string)
+		lcnt++
+	enddo
+
+	gosub GETRU
+	$br(2) 	$bstyle("link", "link") $submit(upt_ru, "RU")
+	lcnt = 1
+	do while lcnt <= $maxarray(pne_ru[])
+		string = $ru(pne_ru[lcnt], "N")
+		$br() $text(pne_ru[lcnt]) $text(string)
+		lcnt++
+	enddo
+
+	gosub GETCON
+	$style("redb")
+	$br(2) 	$bstyle("link", "link") $submit(upt_con, "Concurrent")
+	lcnt = 1
+	do while lcnt <= $maxarray(pne_con_sac[])
+		string = $sam(pne_con_sac[lcnt], "D")
+		$br() $text(pne_con_sac[lcnt])$text(string)
+		lcnt++
+	enddo
+	$br(2)
+
+	%include c_pbutton
+
+	$sendform("upt")
+	$endform("upt")
+
+	if $endbutton = "SUBMIT" then
+		gosub SAVEREC
+		continue_u = "N"
+	elseif $endbutton = "CANCEL" then
+		continue_u = "N"
+	elseif upt_sac = "Y" then
+		gosub UPDATESAC
+	elseif upt_ru = "Y" then
+		gosub UPDATERU
+	elseif upt_con = "Y" then
+		gosub UPDATECON
+	endif
+enddo
+goback
+
+UPDATESAC:
+continue_s = "Y"
+$clear(editsac)
+do while continue_s = "Y"
+	$clear(edit_sac[], update_sac, del_sac[])
+	$submitopt("off", "")
+	$cancelopt("off", "BACK")
+
+	$form("sac")
+	$text("{H1}Progress Note Event Rule Update - SAC{/H1}")
+	$br(2)
+
+	if editsac !dp then
+		gosub GETSAC
+	endif
+
+	$table("t-sac")
+	$row()
+		$col("left", , "10%")
+		$col("left") $text("SAC","datatag")
+
+	lcnt = 1
+	do while lcnt <= $maxarray(pne_sac[])
+		$row()
+		if lcnt != editsac then
+    		if editsac !dp then
+				$col("left", , "10%")
+				$bstyle("link", "link")
+				$submit(edit_sac[lcnt], "E")
+				$submit(del_sac[lcnt], "D")
+			else
+				$col("left", , "10%")
+			endif
+			$col("left") $text(pne_sac[lcnt])
+			string = $sam(pne_sac[lcnt], "D")
+			$text(string)
+		else
+			$col("left",,"10%") $bstyle("link", "link") $submit(update_sac, "U")
+			$col("left") $textbox(pne_sac[lcnt],"SAM",,4)$editmsg(pne_sac[lcnt])
+		endif
+		lcnt++
+	enddo
+	lcnt--
+
+	if editsac !dp then
+		lcnt++
+		$row()
+			$col("left", , "10%") $bstyle("link", "link") $submit(add_sac, "A")
+			$col("left")$textbox(pne_sac[lcnt],"SAM",,4)$editmsg(pne_sac[lcnt])
+	endif
+
+	scnt = lcnt
+
+	$endtable("t-sac")
+
+
+	$sendform("sac")
+	$endform("sac")
+
+	if $endbutton = "CANCEL" then
+		continue_s = "N"
+	elseif add_sac = "Y" then
+		$clear(editsac)
+		gosub ADDSAC
+	elseif update_sac = "Y" then
+		updflag = editsac
+		$clear(editsac)
+		gosub UPDSAC
+	else
+		editsac = 1
+		do while editsac <= $maxarray(edit_sac[])
+			if edit_sac[editsac] = "Y"
+				gosub SAC_EDIT
+			endif
+			editsac++
+		enddo
+		$clear(editsac)
+		SAC_EDIT:
+		dcnt = 1
+		do while dcnt <= $maxarray(del_sac[])
+			if del_sac[dcnt] = "Y"
+				gosub REMOVE_SAC
+			endif
+			dcnt++
+		enddo
+	endif
+enddo
+goback
+
+UPDATERU:
+continue_r = "Y"
+$clear(editru)
+do while continue_r = "Y"
+	$clear(edit_ru[], update_ru, del_ru[])
+	$submitopt("off", "")
+	$cancelopt("off", "BACK")
+
+	$form("ru")
+	$text("{H1}Progress Note Event Rule Update - RU{/H1}")
+	$br(2)
+
+	if editru !dp then
+		gosub GETRU
+	endif
+
+	$table("t-ru")
+	$row()
+		$col("left", , "10%")
+		$col("left") $text("RU","datatag")
+
+	lcnt = 1
+	do while lcnt <= $maxarray(pne_ru[])
+		$row()
+		if lcnt != editru then
+    		if editru !dp then
+				$col("left", , "10%")
+				$bstyle("link", "link")
+				$submit(edit_ru[lcnt], "E")
+				$submit(del_ru[lcnt], "D")
+			else
+				$col("left", , "10%")
+			endif
+			$col("left") $text(pne_ru[lcnt])
+			string = $ru(pne_ru[lcnt], "N")
+			$text(string)
+		else
+			$col("left",,"10%") $bstyle("link", "link") $submit(update_ru, "U")
+			$col("left") $textbox(pne_ru[lcnt],"RU",,4)$editmsg(pne_ru[lcnt])
+		endif
+		lcnt++
+	enddo
+	lcnt--
+
+	if editru !dp then
+		lcnt++
+		$row()
+			$col("left", , "10%") $bstyle("link", "link") $submit(add_ru, "A")
+			$col("left")$textbox(pne_ru[lcnt],"RU",,4)$editmsg(pne_ru[lcnt])
+	endif
+
+	scnt = lcnt
+
+	$endtable("t-ru")
+
+	$sendform("ru")
+	$endform("ru")
+
+	if $endbutton = "CANCEL" then
+		continue_r = "N"
+	elseif add_ru = "Y" then
+		$clear(editru)
+		gosub ADDRU
+	elseif update_ru = "Y" then
+		updflag = editru
+		$clear(editru)
+		gosub UPDRU
+	else
+		editru = 1
+		do while editru <= $maxarray(edit_ru[])
+			if edit_ru[editru] = "Y"
+				gosub RU_EDIT
+			endif
+			editru++
+		enddo
+		$clear(editru)
+		RU_EDIT:
+		dcnt = 1
+		do while dcnt <= $maxarray(del_ru[])
+			if del_ru[dcnt] = "Y"
+				gosub REMOVE_RU
+			endif
+			dcnt++
+		enddo
+	endif
+enddo
+goback
+
+UPDATECON:
+continue_c = "Y"
+$clear(editcon)
+do while continue_c = "Y"
+	$clear(edit_con[], update_con, del_con[])
+	$submitopt("off", "")
+	$cancelopt("off", "BACK")
+
+	$form("con")
+	$text("{H1}Progress Note Event Rule Update - Concurrent SAC{/H1}")
+	$br(2)
+
+	if editcon !dp then
+		gosub GETCON
+	endif
+
+	$table("t-con")
+	$row()
+		$col("left", , "10%")
+		$col("left") $text("SAC","datatag")
+
+	lcnt = 1
+	do while lcnt <= $maxarray(pne_con_sac[])
+		$row()
+		if lcnt != editcon then
+    		if editcon !dp then
+				$col("left", , "10%") $bstyle("link", "link")
+				$submit(edit_con[lcnt], "E")
+				$submit(del_con[lcnt], "D")
+			else
+				$col("left", , "10%")
+			endif
+			$col("left") $text(pne_con_sac[lcnt])
+			string = $sam(pne_con_sac[lcnt], "D")
+			$text(string)
+		else
+			$col("left",,"10%") $bstyle("link", "link") $submit(update_con, "U")
+			$col("left") $textbox(pne_con_sac[lcnt],"SAM",,4)
+						 $editmsg(pne_con_sac[lcnt])
+		endif
+		lcnt++
+	enddo
+	lcnt--
+
+	if editcon !dp then
+		lcnt++
+		$row()
+			$col("left", , "10%") $bstyle("link", "link") $submit(add_con, "A")
+			$col("left") $textbox(pne_con_sac[lcnt],"SAM",,4)
+						 $editmsg(pne_con_sac[lcnt])
+	endif
+
+	scnt = lcnt
+
+	$endtable("t-con")
+
+	$sendform("con")
+	$endform("con")
+
+	if $endbutton = "CANCEL" then
+		continue_c = "N"
+	elseif add_con = "Y" then
+		$clear(editcon)
+		gosub ADDCON
+	elseif update_con = "Y" then
+		updflag = editcon
+		$clear(editcon)
+		gosub UPDCON
+	else
+		editcon = 1
+		do while editcon <= $maxarray(edit_con[])
+			if edit_con[editcon] = "Y"
+				gosub CON_EDIT
+			endif
+			editcon++
+		enddo
+		$clear(editcon)
+		CON_EDIT:
+		dcnt = 1
+		do while dcnt <= $maxarray(del_con[])
+			if del_con[dcnt] = "Y"
+				gosub REMOVE_CON
+			endif
+			dcnt++
+		enddo
+	endif
+enddo
+goback
+
+SAVEREC:
+	$dblock()
+	rc = $dbread(59, pne_id[ucnt], pne.type, pne.desc, pne.carecode,pne.clstdur,
+					 pne.maxdur, pne.minbill, pne.loc, pne.recp, pne.attend,
+					 pne.caredur, pne.group, pne.sup.req, pne.sup.diff,
+					 pne.ua.req, pne.sp, pne.trr.sp, pne.alt.sac, pne.tp.req, pne.ipc,
+                                         pne.req.asmt,
+					 pne.status, pne.msa, pne.sacverify, pne.proj)
+
+	if rc < 2 then
+		pne.id = pne_id[ucnt]
+		pne.type = pne_type[ucnt]
+		pne.desc = pne_desc[ucnt]
+		if pne_carecode[ucnt] = "" then
+			$clear(pne.carecode)
+		else
+			pne.carecode = pne_carecode[ucnt]
+		endif
+		pne.clstdur = pne_clstdur[ucnt]
+		pne.maxdur = pne_maxdur[ucnt]
+		pne.minbill = pne_minbill[ucnt]
+		pne.loc = pne_loc[ucnt]
+		pne.recp = pne_recp[ucnt]
+		pne.attend = pne_attend[ucnt]
+		pne.caredur = pne_caredur[ucnt]
+		pne.group = pne_group[ucnt]
+		pne.sup.req = pne_sup_req[ucnt]
+		pne.sup.diff = pne_sup_diff[ucnt]
+		pne.ua.req = pne_ua_req[ucnt]
+		pne.sp = pne_sp[ucnt]
+		pne.trr.sp = pne_trr_sp[ucnt]
+		pne.alt.sac = pne_alt_sac[ucnt]
+		pne.tp.req = pne_tp_req[ucnt]
+		pne.ipc = pne_ipc[ucnt]
+		pne.status = pne_status[ucnt]
+		pne.msa = pne_msa[ucnt]
+		pne.sacverify = pne_sacverify[ucnt]
+		pne.proj = pne_proj[ucnt]
+                pne.req.asmt = pne_req_asmt[ucnt]
+		rc = $dbupdate(59, pne.id, pne.type, pne.desc, pne.carecode,pne.clstdur,
+						   pne.maxdur, pne.minbill, pne.loc,pne.recp,pne.attend,
+						   pne.caredur, pne.group, pne.sup.req, pne.sup.diff,
+						   pne.ua.req, pne.sp, pne.trr.sp, pne.alt.sac, pne.tp.req,
+                                                   pne.req.asmt,
+						   pne.ipc, pne.status, pne.msa, pne.sacverify, pne.proj)
+	endif
+	if rc > 1 then
+		string = "There was an error in dbupdate.  rc=" + $format(rc, "ZZZ")
+		$brmsg(string, 1, "W", "ERROR")
+		return
+	endif
+	$dbunlock()
+goback
+
+
+'**************************************ADD FORM******************************
+ADDREC:
+	$submitopt("off", "SAVE")
+	$cancelopt("off", "QUIT")
+
+	$form("add")
+	$text("{H1}Add Progress Note Event Rule{/H1}")
+	$br(2)
+	$table("t1")
+
+	$row()
+		$col() $text("TYPE","datatag")
+		$col() $textbox(pne_type[mcnt], ,8, 8, "Y")
+	$row()
+		$col() $text("DESCRIPTION","datatag")
+		$col() $textbox(pne_desc[mcnt], ,64, 64, "Y")
+	$row()
+		$col("left", , "25%") $text("STATUS")
+		$col() $dropboxdct(pne_status[mcnt], 1044,,,,"Y")
+	$row()
+		$col("left", , "25%") $text("Major Service Area")
+		$col() $dropboxdct(pne_status[mcnt], 71,,,,"Y")
+	$row()
+		$col() $text("CARE","datatag")
+		$col() $textbox(pne_carecode[mcnt], ,4, 6)
+	$row()
+		$col() $text("Match Dur?","datatag")
+		$col() $dropboxdct(pne_clstdur[mcnt], 29,,,,"Y")
+	$row()
+		$col() $text("Max Dur","datatag")
+		$col() $textbox(pne_maxdur[mcnt],"DUR",,,"Y")
+	$row()
+		$col() $text("Min Dur","datatag")
+		$col() $textbox(pne_minbill[mcnt],"DUR",,, "Y")
+
+	$row()
+		$col() $text("Location Code","datatag")
+		$col() $textbox(pne_loc[mcnt])
+	$row()
+		$col() $text("Recipient Code","datatag")
+		$col() $textbox(pne_recp[mcnt])
+	$row()
+		$col() $text("Attendance Code","datatag")
+		$col() $textbox(pne_attend[mcnt])
+	$row()
+		$col() $text("Project Code","datatag")
+		$col() $textbox(pne_proj[mcnt])
+	$row()
+		$col() $text("Care Days","datatag")
+		$col() $textbox(pne_caredur[mcnt])
+
+	$row()
+		$col() $text("Group","datatag")
+		$col() $dropboxdct(pne_group[mcnt], 29,,,,"Y")
+	$row()
+		$col() $text("Supervisor Required?","datatag")
+		$col() $dropboxdct(pne_sup_req[mcnt], 29,,,,"Y")
+	$row()
+		$col() $text("Supervisor Must be Different?","datatag")
+		$col() $dropboxdct(pne_sup_diff[mcnt], 29,,,,"Y")
+	$row()
+		$col() $text("Is IPC Required?","datatag")
+		$col() $dropboxdct(pne_ipc[mcnt], 29,,,,"Y")
+	$row()
+		$col() $text("Is Uniform Assessment Required?","datatag")
+		$col() $dropboxdct(pne_ua_req[mcnt], 29,,,,"Y")
+	$row()
+		$col() $text("RDM SP's Allowed","datatag")
+		$col() $textbox(pne_sp[mcnt])
+	$row()
+		$col() $text("TRR SP's Allowed","datatag")
+		$col() $textbox(pne_trr_sp[mcnt])
+	$row()
+		$col("left", , "25%") $text("Specific Assessment Required:")
+		$col() $textbox(pne_req_asmt[ucnt])
+	$row()
+		$col() $text("Alternate SAC","datatag")
+		$col() $textbox(pne_alt_sac[mcnt],"SAM",,4)
+		$editmsg(pne_alt_sac[mcnt])
+	$row()
+		$col() $text("Is Treatment Plan Required?","datatag")
+		$col() $dropboxdct(pne_tp_req[mcnt], 29,,,,"Y")
+	$row()
+	   $col() $text("Verify Sac with User?", "datatag")
+	   $col() $dropboxdct(pne_sacverify[mcnt], 29,,,,"Y")
+	$row()
+	$endtable("t1")
+
+	$sendform("add")
+	$endform("add")
+
+if $endbutton = "SUBMIT" then
+	pne.id = $uniquerecid(59)
+	pne.type = pne_type[mcnt]
+	pne.desc = pne_desc[mcnt]
+	pne.carecode = pne_carecode[mcnt]
+	pne.clstdur = pne_clstdur[mcnt]
+	pne.maxdur = pne_maxdur[mcnt]
+	pne.minbill = pne_minbill[mcnt]
+	pne.loc = pne_loc[mcnt]
+	pne.recp = pne_recp[mcnt]
+	pne.attend = pne_attend[mcnt]
+	pne.caredur = pne_caredur[mcnt]
+	pne.group = pne_group[mcnt]
+	pne.sup.req = pne_sup_req[mcnt]
+	pne.sup.diff = pne_sup_diff[mcnt]
+	pne.ua.req = pne_ua_req[mcnt]
+	pne.sp = pne_sp[mcnt]
+	pne.trr.sp = pne_trr_sp[mcnt]
+	pne.alt.sac = pne_alt_sac[mcnt]
+	pne.tp.req = pne_tp_req[mcnt]
+	pne.ipc = pne_ipc[mcnt]
+	pne.status = pne_status[mcnt]
+	pne.msa = pne_msa[mcnt]
+	pne.sacverify = pne_sacverify[mcnt]
+	pne.proj = pne_proj[mcnt]
+        pne.req.asmt = pne_req_asmt[mcnt]
+	$dblock()
+	rc = $dbaddreg(59, pne.id, pne.type, pne.desc, pne.carecode, pne.clstdur,
+					   pne.maxdur, pne.minbill, pne.loc, pne.recp, pne.attend,
+					   pne.caredur, pne.group, pne.sup.req, pne.sup.diff,
+					   pne.ua.req, pne.sp, pne.trr.sp, pne.alt.sac, pne.tp.req,
+                                           pne.req.asmt,
+					   pne.ipc, pne.status, pne.msa, pne.sacverify, pne.proj)
+	if rc > 0 then
+		string = "There was an error in dbaddreg.  rc=" + $format(rc, "ZZZ")
+		$brmsg(string, 1, "W", "ERROR")
+		return
+	endif
+	$dbunlock()
+endif
+gosub READREC
+goback
+
+'**************************************DELETE FORM******************************
+DELREC:
+mcnt = rcnt
+
+	$submitopt("on", "YES")
+	$cancelopt("on", "NO")
+
+	$form("del")
+	$text("{H1}Delete Progress Note Event Rule{/H1}")
+	$br(2)
+	$table("t1")
+
+	$row()
+		$col() $text("TYPE","datatag")
+		$col() $text(pne_type[mcnt])
+	$row()
+		$col() $text("DESCRIPTION","datatag")
+		$col() $text(pne_desc[mcnt])
+	$row()
+		$col() $text("Status","datatag")
+		$col() $text(pne_status[mcnt])
+	$row()
+		$col() $text("Major Service Area","datatag")
+		$col() $text(pne_msa[mcnt])
+	$row()
+		$col() $text("CARE","datatag")
+		$col() $text(pne_carecode[mcnt])
+	$row()
+		$col() $text("Match Dur?","datatag")
+		$col() $text(pne_clstdur[mcnt], "DCV``29")
+	$row()
+		$col() $text("Max Dur","datatag")
+		$col() $text(pne_maxdur[mcnt],"DUR")
+	$row()
+		$col() $text("Min Dur","datatag")
+		$col() $text(pne_minbill[mcnt],"DUR")
+	$row()
+		$col() $text("Location Code","datatag")
+		$col() $text(pne_loc[mcnt])
+	$row()
+		$col() $text("Recipient Code","datatag")
+		$col() $text(pne_recp[mcnt],"DUR")
+	$row()
+		$col() $text("Attendance Code","datatag")
+		$col() $text(pne_attend[mcnt],"DUR")
+	$row()
+		$col() $text("Project Code","datatag")
+		$col() $text(pne_proj[mcnt],"DUR")
+	$row()
+		$col() $text("Care Days","datatag")
+		$col() string = $format(pne_caredur[mcnt], "ZZZ") $text(string)
+	$row()
+		$col() $text("Group","datatag")
+		$col() $text(pne_group[mcnt])
+	$row()
+		$col() $text("Supervisor Required?","datatag")
+		$col() $text(pne_sup_req[mcnt])
+	$row()
+		$col() $text("Supervisor Must be Different?","datatag")
+		$col() $text(pne_sup_diff[mcnt])
+	$row()
+		$col() $text("Is IPC Required?","datatag")
+		$col() $text(pne_ipc[mcnt], "DCV``29")
+	$row()
+		$col() $text("Is Uniform Assessment Required?","datatag")
+		$col() $text(pne_ua_req[mcnt], "DCV``29")
+	$row()
+		$col() $text("RDM SP's Allowed","datatag")
+		$col() $text(pne_sp[mcnt])
+	$row()
+		$col() $text("TRR SP's Allowed","datatag")
+		$col() $text(pne_trr_sp[mcnt])
+	$row()
+		$col("left", , "25%") $text("Specific Assessment Required:")
+		$col() $text(pne_req_asmt[ucnt])
+	$row()
+		$col() $text("Alternate SAC","datatag")
+		$col() string = $format(pne_alt_sac[mcnt], "ZZZZ") $text(string)
+	$row()
+		$col() $text("Is Treatment Plan Required?","datatag")
+		$col() $text(pne_tp_req[mcnt], "DCV``29")
+	$row()
+	   $col() $text("Verify Sac with user?","datatag")
+	   $col() $text(pne_sacverify[mcnt], "DCV``29")
+	$row()
+	$endtable("t1")
+
+	$text("Are you sure you wish to delete event rule?","datatag")
+	$br()
+	$sendform("del")
+	$endform("del")
+
+if $endbutton = "SUBMIT" then
+	$dblock()
+	pne.id = pne_id[mcnt]
+	rc = $dbremovereg(59, pne.id)
+	if rc > 0 then
+		string = "There was an error in dbremove.  rc=" + $format(rc, "ZZZ")
+		$brmsg(string, 1, "W", "ERROR")
+		return
+	endif
+	$dbunlock()
+endif
+gosub READREC
+goback
+
+'**************************************PRINT FORM******************************
+PRTREC:
+	$form("main")
+	$text("{H1}Progress Note Event Rule Update{/H1}")
+	$br(2)
+
+	$table("t2")
+	$row()
+		$col("center",,,"1","1") $text("TYPE","datatag")
+		$col("center",,,"1","1") $text("DESCRIPTION","datatag")
+		$col("center",,,"1","1") $text("Status","datatag")
+		$col("center",,,"1","1") $text("MSA","datatag")
+		$col("center",,,"1","1") $text("CARE","datatag")
+		$col("center",,,"1","1") $text("Match Dur?","datatag")
+		$col("center",,,"1","1") $text("Max Dur","datatag")
+		$col("center",,,"1","1") $text("Min Dur","datatag")
+		$col("center",,,"1","1") $text("Loc","datatag")
+		$col("center",,,"1","1") $text("Recp","datatag")
+		$col("center",,,"1","1") $text("Attend","datatag")
+		$col("center",,,"1","1") $text("Care Days","datatag")
+		$col("center",,,"1","1") $text("Group","datatag")
+		$col("center",,,"1","1") $text("Sup Req","datatag")
+		$col("center",,,"1","1") $text("Sup Phy","datatag")
+		$col("center",,,"1","1") $text("IPC Req?","datatag")
+		$col("center",,,"1","1") $text("UA Req?","datatag")
+		$col("center",,,"1","1") $text("SP","datatag")
+		$col("center",,,"1","1") $text("Alt SAC","datatag")
+		$col("center",,,"1","1") $text("TP Req?","datatag")
+		$col("center",,,"1","1") $text("Sac Verify?","datatag")
+
+	mcnt = 1
+	do while mcnt <= $maxarray(pne_id[])
+		y = mcnt
+		uaradio = mcnt
+		$row()
+			$col() $text(pne_type[mcnt])
+			$col() $text(pne_desc[mcnt])
+			$col() $text(pne_status[mcnt])
+			$col() $text(pne_msa[mcnt])
+			$col() $text(pne_ipc[mcnt])
+			$col() $text(pne_carecode[mcnt])
+			$col() $text(pne_clstdur[mcnt])
+			$col() string = $format(pne_maxdur[mcnt], "HH:MM") $text(string)
+			$col() string = $format(pne_minbill[mcnt], "HH:MM")	$text(string)
+			$col() $text(pne_loc[mcnt])
+			$col() $text(pne_recp[mcnt])
+			$col() $text(pne_attend[mcnt])
+			$col() string = $format(pne_caredur[mcnt], "ZZZ") $text(string)
+			$col() $text(pne_group[mcnt])
+			$col() $text(pne_sup_req[mcnt])
+			$col() $text(pne_sup_diff[mcnt])
+			$col() $text(pne_ua_req[mcnt])
+			$col() $text(pne_sp[mcnt])
+			$col() string = $format(pne_alt_sac[mcnt], "ZZZZ") $text(string)
+			$col() $text(pne_tp_req[mcnt])
+			$col() $text(pne_sacverify[mcnt])
+		mcnt = mcnt + 1
+	enddo
+	$endtable("t2")
+
+	%include c_pbutton
+	$sendform("main")
+	$endform("main")
+
+	if $endbutton = "CANCEL" then
+		goback
+	endif
+
+goback
+
+COPYREC:
+		pne_id[mcnt] = pne_id[rcnt]
+		pne_type[mcnt] = pne_type[rcnt]
+		pne_desc[mcnt] = pne_desc[rcnt]
+		pne_carecode[mcnt] = pne_carecode[rcnt]
+		pne_clstdur[mcnt] = pne_clstdur[rcnt]
+		pne_maxdur[mcnt] = pne_maxdur[rcnt]
+		pne_minbill[mcnt] = pne_minbill[rcnt]
+		pne_loc[mcnt] = pne_loc[rcnt]
+		pne_recp[mcnt] = pne_recp[rcnt]
+		pne_attend[mcnt] = pne_attend[rcnt]
+		pne_caredur[mcnt] = pne_caredur[rcnt]
+		pne_group[mcnt] = pne_group[rcnt]
+		pne_sup_req[mcnt] = pne_sup_req[rcnt]
+		pne_sup_diff[mcnt] = pne_sup_diff[rcnt]
+		pne_ua_req[mcnt] = pne_ua_req[rcnt]
+		pne_sp[mcnt] = pne_sp[rcnt]
+		pne_trr_sp[mcnt] = pne_trr_sp[rcnt]
+		pne_alt_sac[mcnt] = pne_alt_sac[rcnt]
+		pne_tp_req[mcnt] = pne_tp_req[rcnt]
+		pne_ipc[mcnt] = pne_ipc[rcnt]
+		pne_msa[mcnt] = pne_msa[rcnt]
+		pne_status[mcnt] = pne_status[rcnt]
+		pne_sacverify[mcnt] = pne_sacverify[rcnt]
+                pne_req_asmt[mcnt] = pne_req_asmt[rcnt]
+gosub ADDREC
+goback
+'************************END OF SCRIPT******************************************
+
+READREC:
+   if o_excel != "Y" then
+	   $brmsg("Searching Database. Please Wait", 1, "C",)
+	endif
+
+	$clear(pne_id[],pne_type[],pne_desc[],pne_carecode[])
+	$clear(pne_clstdur[], pne_maxdur[], pne_minbill[])
+	$clear(pne_loc[], pne_recp[], pne_attend[], pne_caredur[])
+	$clear(pne_group[], pne_sup_req[], pne_sup_diff[])
+	$clear(pne_oru[], pne_osac[])
+	$clear(pne_ua_req[], pne_sp[], pne_trr_sp[], pne_alt_sac[], pne_tp_req[], pne_ipc[])
+	$clear(pne_saclist[], pne_rulist[], pne_conlist[], pne_status[], pne_msa[], pne_sacverify[])
+        $clear(pne_req_asmt[])
+
+   if search[] dp then
+      $searchparm(search[])
+      rv = $searchinit()
+      if rv = 0 then
+         rv = $search(s_crit[],,,,pne_id[])
+      endif
+   endif
+   if rv > 0 then
+      $brmsg($errmsg, 1, "WEC")
+      $clear(rv, search[], s_crit[], Pne_id[])
+	   rv = $dbstart(59)
+   endif
+
+	anum = 1
+	if search[] dp then
+	   rv = $dbread(59, pne_id[anum], pne.type, pne.desc, pne.carecode, pne.clstdur,
+					     pne.maxdur, pne.minbill, pne.loc, pne.recp, pne.attend,
+					     pne.caredur, pne.group, pne.sup.req, pne.sup.diff,
+						 pne.oru, pne.osac, pne.ua.req, pne.sp, pne.trr.sp, pne.alt.sac,
+                                                 pne.req.asmt,
+						 pne.tp.req, pne.ipc, pne.status, pne.msa, pne.sacverify, pne.proj)
+   else
+      pne.id = " "
+      rv = $dbstart(59,pne.id)
+	   rv = $dbread(59, pne.id, pne.type, pne.desc, pne.carecode, pne.clstdur,
+					     pne.maxdur, pne.minbill, pne.loc, pne.recp, pne.attend,
+					     pne.caredur, pne.group, pne.sup.req, pne.sup.diff,
+						 pne.oru, pne.osac, pne.ua.req, pne.sp, pne.trr.sp, pne.alt.sac,
+                                                 pne.req.asmt,
+						 pne.tp.req, pne.ipc, pne.status, pne.msa, pne.sacverify, pne.proj)
+	endif
+
+	do while rv < 3
+	   if load_id !dp or load_id = pne.type then
+		if pne.id dp then pne_id[anum] = pne.id endif
+		pne_type[anum] = pne.type
+		pne_desc[anum] = pne.desc
+		pne_carecode[anum] = pne.carecode
+		pne_clstdur[anum] = pne.clstdur
+		pne_maxdur[anum] = pne.maxdur
+		pne_minbill[anum] = pne.minbill
+		pne_loc[anum] = pne.loc
+		pne_recp[anum] = pne.recp
+		pne_attend[anum] = pne.attend
+		pne_caredur[anum] = pne.caredur
+		pne_group[anum] = pne.group
+		pne_sup_req[anum] = pne.sup.req
+		pne_sup_diff[anum] = pne.sup.diff
+		pne_oru[anum] = pne.oru
+		pne_osac[anum] = pne.osac
+		pne_ua_req[anum] = pne.ua.req
+		pne_sp[anum] = pne.sp
+		pne_trr_sp[anum] = pne.trr.sp
+		pne_alt_sac[anum] = pne.alt.sac
+		pne_tp_req[anum] = pne.tp.req
+		pne_ipc[anum] = pne.ipc
+		pne_msa[anum] = pne.msa
+		pne_status[anum] = pne.status
+		pne_sacverify[anum] = pne.sacverify
+		pne_proj[anum] = pne.proj
+                pne_req_asmt[anum] = pne.req.asmt
+		if last_id < pne_id[mcnt] then
+			last_id = pne_id[mcnt]
+		endif
+
+      if o_excel = "Y" then
+   	   $clear(pne_list[])
+   		ccnt2 = 1
+   		rc2 = $dbread(59, pne.id, pne.sac.rec, pne.sac)
+   		do while rc2 < 2
+   			pne_list[ccnt2] = $format(pne.sac,"9999")
+   			ccnt2++
+   			rc2 = $dbreadnextdst(59, pne.id, pne.sac.rec, pne.sac)
+   		enddo
+   		rc = $sort(pne_list[])
+   		rc = $putds(pne_list[], pne_saclist[anum],x"20")		' Build output record
+      
+   		$clear(pne_list[])
+   		ccnt2 = 1
+   		rc2 = $dbread(59, pne.id, pne.ru.rec, pne.ru)
+   		do while rc2 < 2
+   			pne_list[ccnt2] = $format(pne.ru,"9999")
+   			ccnt2++
+   			rc2 = $dbreadnextdst(59, pne.id, pne.ru.rec, pne.ru)
+   		enddo
+   		rc = $sort(pne_list[])
+   		rc = $putds(pne_list[], pne_rulist[anum],x"20")		' Build output record
+      
+   		$clear(pne_list[])
+   		ccnt2 = 1
+   		rc2 = $dbread(59, pne.id, pne.con.rec, pne.con.sac)
+   		do while rc2 < 2
+   			pne_list[ccnt2] = $format(pne.con.sac,"9999")
+   			ccnt2++
+   			rc2 = $dbreadnextdst(59, pne.id, pne.con.rec, pne.con.sac)
+   		enddo
+   		rc = $sort(pne_list[])
+   		rc = $putds(pne_list[], pne_conlist[anum],x"20")		' Build output record
+      endif
+
+		anum = anum + 1
+	   endif
+   	if search[] dp then
+   	   rv = $dbread(59, pne_id[anum], pne.type, pne.desc, pne.carecode, pne.clstdur,
+   					     pne.maxdur, pne.minbill, pne.loc, pne.recp, pne.attend,
+   					     pne.caredur, pne.group, pne.sup.req, pne.sup.diff,
+   						 pne.oru, pne.osac, pne.ua.req, pne.sp, pne.trr.sp, pne.alt.sac,
+                                                 pne.req.asmt,
+   						 pne.tp.req, pne.ipc, pne.status, pne.msa, pne.sacverify, pne.proj)
+      else
+   	   rv = $dbreadnext(59, pne.id, pne.type, pne.desc, pne.carecode, pne.clstdur,
+   					     pne.maxdur, pne.minbill, pne.loc, pne.recp, pne.attend,
+   					     pne.caredur, pne.group, pne.sup.req, pne.sup.diff,
+   						 pne.oru, pne.osac, pne.ua.req, pne.sp, pne.trr.sp, pne.alt.sac,
+                                                 pne.req.asmt,
+   						 pne.tp.req, pne.ipc, pne.status, pne.msa, pne.sacverify, pne.proj)
+   	endif
+
+	enddo
+	sort_type[2] = "Y"
+	gosub SORTREC
+goback
+
+SORTREC:
+if sort_type[1] = "Y" then			'type
+	rv = $sort(pne_type[], pne_desc[], pne_carecode[], pne_id[],pne_clstdur[],
+			   pne_maxdur[], pne_minbill[], pne_loc[], pne_recp[], pne_attend[],
+			   pne_caredur[], pne_group[], pne_sup_req[], pne_sup_diff[],
+			   pne_oru[], pne_osac[], pne_ua_req[], pne_sp[], pne_trr_sp[], pne_alt_sac[],
+			   pne_tp_req[], pne_ipc[], pne_saclist[], pne_rulist[],
+			   pne_conlist[], pne_status[], pne_msa[], pne_sacverify[], pne_proj[], pne_req_asmt[])
+elseif sort_type[2] = "Y" then		'description
+	rv = $sort(pne_desc[], pne_type[], pne_carecode[], pne_id[],pne_clstdur[],
+			   pne_maxdur[], pne_minbill[], pne_loc[], pne_recp[], pne_attend[],
+			   pne_caredur[], pne_group[], pne_sup_req[], pne_sup_diff[],
+			   pne_oru[], pne_osac[], pne_ua_req[], pne_sp[], pne_trr_sp[], pne_alt_sac[],
+			   pne_tp_req[], pne_ipc[], pne_saclist[], pne_rulist[],
+			   pne_conlist[], pne_status[], pne_msa[], pne_sacverify[], pne_proj[], pne_req_asmt[])
+elseif sort_type[3] = "Y" then		'care
+	rv = $sort(pne_carecode[], pne_desc[], pne_type[], pne_id[],pne_clstdur[],
+			   pne_maxdur[], pne_minbill[], pne_loc[], pne_recp[], pne_attend[],
+			   pne_caredur[], pne_group[], pne_sup_req[], pne_sup_diff[],
+			   pne_oru[], pne_osac[], pne_ua_req[], pne_sp[], pne_trr_sp[], pne_alt_sac[],
+			   pne_tp_req[], pne_ipc[], pne_saclist[], pne_rulist[],
+			   pne_conlist[], pne_status[], pne_msa[], pne_sacverify[], pne_proj[], pne_req_asmt[])
+elseif sort_type[4] = "Y" then		'ua required
+	rv = $sort(pne_ua_req[], "D", pne_desc[], pne_type[], pne_carecode[],
+			   pne_id[], pne_clstdur[], pne_maxdur[], pne_minbill[], pne_loc[],
+			   pne_recp[], pne_attend[], pne_caredur[], pne_group[],
+			   pne_sup_req[], pne_sup_diff[], pne_oru[], pne_osac[], pne_sp[], pne_trr_sp[],
+			   pne_alt_sac[], pne_tp_req[], pne_ipc[], pne_saclist[],
+			   pne_rulist[], pne_conlist[], pne_status[], pne_msa[], pne_sacverify[], pne_proj[], pne_req_asmt[])
+elseif sort_type[5] = "Y" then		'IPC
+	rv = $sort(pne_ipc[], pne_ua_req[], "D", pne_desc[], pne_type[],
+			   pne_carecode[], pne_id[], pne_clstdur[], pne_maxdur[],
+			   pne_minbill[], pne_loc[], pne_recp[], pne_attend[],
+			   pne_caredur[], pne_group[], pne_sup_req[], pne_sup_diff[],
+			   pne_oru[], pne_osac[], pne_sp[], pne_trr_sp[], pne_alt_sac[], pne_tp_req[],
+			   pne_saclist[], pne_rulist[], pne_conlist[], pne_status[],
+			   pne_msa[], pne_sacverify[], pne_proj[], pne_req_asmt[])
+elseif sort_type[6] = "Y" then			'Status
+	rv = $sort(pne_status[], pne_type[], pne_desc[], pne_carecode[], pne_id[],pne_clstdur[],
+			   pne_maxdur[], pne_minbill[], pne_loc[], pne_recp[], pne_attend[],
+			   pne_caredur[], pne_group[], pne_sup_req[], pne_sup_diff[],
+			   pne_oru[], pne_osac[], pne_ua_req[], pne_sp[], pne_trr_sp[], pne_alt_sac[],
+			   pne_tp_req[], pne_ipc[], pne_saclist[], pne_rulist[],
+			   pne_conlist[], pne_msa[], pne_sacverify[], pne_proj[], pne_req_asmt[])
+elseif sort_type[7] = "Y" then			'msa
+	rv = $sort(pne_msa[], pne_desc[], pne_type[], pne_carecode[], pne_id[],
+			   pne_clstdur[], pne_maxdur[], pne_minbill[], pne_loc[],
+			   pne_recp[], pne_attend[], pne_caredur[], pne_group[],
+			   pne_sup_req[], pne_sup_diff[], pne_oru[], pne_osac[],
+			   pne_ua_req[], pne_sp[], pne_trr_sp[], pne_alt_sac[], pne_tp_req[],
+			   pne_ipc[], pne_saclist[], pne_rulist[], pne_conlist[],
+			   pne_status[], pne_sacverify[], pne_proj[], pne_req_asmt[])
+endif
+$clear(sort_type[])
+goback
+
+GETSAC:
+	$clear(pne_sac[],pne_sac_uid[],list_sac)
+	anum = 1
+	rv = $dbread(59, pne_id[ucnt], pne.sac.rec, pne.sac)
+	do while rv < 2
+		pne_sac[anum] = pne.sac
+		pne_sac_uid[anum] = pne.sac.rec[uid]
+		if anum = 1 then
+			list_sac = $format(pne.sac, "9999")
+		else
+			list_sac = list_sac + ", " + $format(pne.sac, "9999")
+		endif
+		anum = anum + 1
+		rv = $dbreadnextdst(59, pne_id[ucnt], pne.sac.rec, pne.sac)
+	enddo
+	rv = $sort(pne_sac[], pne_sac_uid[])
+goback
+
+GETRU:
+	$clear(pne_ru[],pne_ru_uid[])
+	anum = 1
+	rv = $dbread(59, pne_id[ucnt], pne.ru.rec, pne.ru)
+	do while rv < 2
+		pne_ru[anum] = pne.ru
+		pne_ru_uid[anum] = pne.ru.rec[uid]
+		if anum = 1 then
+			list_ru = $format(pne.ru, "9999")
+		else
+			list_ru = list_ru + ", " + $format(pne.ru, "9999")
+		endif
+		anum = anum + 1
+		rv = $dbreadnextdst(59, pne_id[ucnt], pne.ru.rec, pne.ru)
+	enddo
+	rv = $sort(pne_ru[], pne_ru_uid[])
+goback
+
+GETCON:
+	$clear(pne_con_sac[],pne_con_uid[],list_consac)
+	anum = 1
+	rv = $dbread(59, pne_id[ucnt], pne.con.rec, pne.con.sac)
+	do while rv < 2
+		pne_con_sac[anum] = pne.con.sac
+		pne_con_uid[anum] = pne.con.rec[uid]
+		if anum = 1 then
+			list_consac = $format(pne.con.sac, "9999")
+		else
+			list_consac = list_consac + ", " + $format(pne.con.sac, "9999")
+		endif
+		anum = anum + 1
+		rv = $dbreadnextdst(59, pne_id[ucnt], pne.con.rec, pne.con.sac)
+	enddo
+	rv = $sort(pne_con_sac[], pne_con_uid[])
+goback
+
+
+ADDSAC:
+	$dblock()
+	rc = $dbread(59, pne_id[ucnt], pne.sac.rec, pne.sac)
+	if rc > 2 then
+		string = "ERROR! Contact MIS and report C:dbread S:" + $scriptid +
+				 " L:" + $sourceline + ")"
+		$brmsg(string, 1)
+		string = "rc = " + $format(rc, "ZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+		continue_s = "N"
+	endif
+	$clear(pne.sac.rec)
+	pne.sac = pne_sac[scnt]
+	$dblock()
+	rc = $dbadddst(59, pne_id[ucnt], pne.sac.rec, pne.sac)
+	if rc > 1 then
+		string = "ERROR! Contact MIS and report C:dbadddst S:" + $scriptid +
+				 " L:" + $sourceline + ")"
+		$brmsg(string, 1)
+		string = "rc = " + $format(rc, "ZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+	endif
+	$dbunlock()
+goback
+
+ADDRU:
+	$dblock()
+	rc = $dbread(59, pne_id[ucnt], pne.ru.rec, pne.ru)
+	if rc > 2 then
+		string = "ERROR! Contact MIS and report C:dbread S:" + $scriptid +
+				 " L:" + $sourceline + ")"
+		$brmsg(string, 1)
+		string = "rc = " + $format(rc, "ZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+		continue_r = "N"
+	endif
+	$clear(pne.ru.rec)
+	pne.ru = pne_ru[scnt]
+	$dblock()
+	rc = $dbadddst(59, pne_id[ucnt], pne.ru.rec, pne.ru)
+	if rc > 1 then
+		string = "ERROR! Contact MIS and report C:dbadddst S:" + $scriptid +
+				 " L:" + $sourceline + ")"
+		$brmsg(string, 1)
+		string = "rc = " + $format(rc, "ZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+	endif
+	$dbunlock()
+goback
+
+ADDCON:
+	$dblock()
+	rc = $dbread(59, pne_id[ucnt], pne.con.rec, pne.con.sac)
+	if rc > 2 then
+		string = "ERROR! Contact MIS and report C:dbread S:" + $scriptid +
+				 " L:" + $sourceline + ")"
+		$brmsg(string, 1)
+		string = "rc = " + $format(rc, "ZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+		continue_c = "N"
+	endif
+	$clear(pne.con.rec)
+	pne.con.sac = pne_con_sac[scnt]
+	$dblock()
+	rc = $dbadddst(59, pne_id[ucnt], pne.con.rec, pne.con.sac)
+	if rc > 1 then
+		string = "ERROR! Contact MIS and report C:dbadddst S:" + $scriptid +
+				 " L:" + $sourceline + ")"
+		$brmsg(string, 1)
+		string = "rc = " + $format(rc, "ZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+	endif
+	$dbunlock()
+goback
+
+UPDSAC:
+	$dblock()
+	rc = $dbreaduid(pne_sac_uid[updflag], 59, pne_id[ucnt], pne.sac.rec,pne.sac)
+	if rc < 2 then
+		pne.sac = pne_sac[updflag]
+		rc = $dbupdateuid(pne_sac_uid[updflag], 59, pne_id[ucnt], pne.sac.rec,
+						  pne.sac)
+	else
+		string = "ERROR! Contact MIS and report C:dbreaduid S:" + $scriptid +
+				 " L:" + $sourceline + ")"
+		$brmsg(string, 1)
+		string = "rc = " + $format(rc, "ZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+	endif
+	if rc > 1 then
+		string = "ERROR! Contact MIS and report C:dbupdateuid S:" + $scriptid +
+				 " L:" + $sourceline + ")"
+		$brmsg(string, 1)
+		string = "rc = " + $format(rc, "ZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+	endif
+	$dbunlock()
+goback
+
+UPDRU:
+	$dblock()
+	rc = $dbreaduid(pne_ru_uid[updflag], 59, pne_id[ucnt], pne.ru.rec, pne.ru)
+	if rc < 2 then
+		pne.ru = pne_ru[updflag]
+		rc = $dbupdateuid(pne_ru_uid[updflag],59,pne_id[ucnt],pne.ru.rec,pne.ru)
+	else
+		string = "ERROR! Contact MIS and report C:dbreaduid S:" + $scriptid +
+				 " L:" + $sourceline + ")"
+		$brmsg(string, 1)
+		string = "rc = " + $format(rc, "ZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+	endif
+	if rc > 1 then
+		string = "ERROR! Contact MIS and report C:dbupdateuid S:" + $scriptid +
+				 " L:" + $sourceline + ")"
+		$brmsg(string, 1)
+		string = "rc = " + $format(rc, "ZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+	endif
+	$dbunlock()
+goback
+
+UPDCON:
+	$dblock()
+	rc = $dbreaduid(pne_con_uid[updflag], 59, pne_id[ucnt], pne.con.rec,
+					pne.con.sac)
+	if rc < 2 then
+		pne.con.sac = pne_con_sac[updflag]
+		rc = $dbupdateuid(pne_con_uid[updflag], 59, pne_id[ucnt], pne.con.rec,
+						  pne.con.sac)
+	else
+		string = "ERROR! Contact MIS and report C:dbreaduid S:" + $scriptid +
+				 " L:" + $sourceline + ")"
+		$brmsg(string, 1)
+		string = "rc = " + $format(rc, "ZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+	endif
+	if rc > 1 then
+		string = "ERROR! Contact MIS and report C:dbupdateuid S:" + $scriptid +
+				 " L:" + $sourceline + ")"
+		$brmsg(string, 1)
+		string = "rc = " + $format(rc, "ZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+	endif
+	$dbunlock()
+goback
+
+REMOVE_SAC:
+	$dblock()
+	rc = $dbreaduid(pne_sac_uid[dcnt], 59, pne_id[ucnt], pne.sac.rec, pne.sac)
+	if rc < 2 then
+		rc = $dbremoveuid(pne_sac_uid[dcnt], 59, pne_id[ucnt], pne.sac.rec)
+	else
+		string = "There was an error in dbreaduid.  rc=" + $format(rc, "ZZZ")
+		$brmsg(string, 1)
+		string = "errcode=" + $format($errcode, "ZZZZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+	endif
+	if rc > 1 then
+		string = "ERROR! Contact MIS and report C:dbremoveuid S:" + $scriptid +
+				 " L:" + $sourceline + ")"
+		$brmsg(string, 1)
+		string = "rc = " + $format(rc, "ZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+	endif
+	$dbunlock()
+goback
+
+REMOVE_RU:
+	$dblock()
+	rc = $dbreaduid(pne_ru_uid[dcnt], 59, pne_id[ucnt], pne.ru.rec, pne.ru)
+	if rc < 2 then
+		rc = $dbremoveuid(pne_ru_uid[dcnt], 59, pne_id[ucnt], pne.ru.rec)
+	else
+		string = "There was an error in dbreaduid.  rc=" + $format(rc, "ZZZ")
+		$brmsg(string, 1)
+		string = "errcode=" + $format($errcode, "ZZZZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+	endif
+	if rc > 1 then
+		string = "ERROR! Contact MIS and report C:dbremoveuid S:" + $scriptid +
+				 " L:" + $sourceline + ")"
+		$brmsg(string, 1)
+		string = "rc = " + $format(rc, "ZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+	endif
+	$dbunlock()
+goback
+
+REMOVE_CON:
+	$dblock()
+	rc = $dbreaduid(pne_con_uid[dcnt], 59, pne_id[ucnt], pne.con.rec,
+					pne.con.sac)
+	if rc < 2 then
+		rc = $dbremoveuid(pne_con_uid[dcnt], 59, pne_id[ucnt], pne.con.rec)
+	else
+		string = "There was an error in dbreaduid.  rc=" + $format(rc, "ZZZ")
+		$brmsg(string, 1)
+		string = "errcode=" + $format($errcode, "ZZZZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+	endif
+	if rc > 1 then
+		string = "ERROR! Contact MIS and report C:dbremoveuid S:" + $scriptid +
+				 " L:" + $sourceline + ")"
+		$brmsg(string, 1)
+		string = "rc = " + $format(rc, "ZZZ")
+		$brmsg(string, 2, "W", "ERROR")
+	endif
+	$dbunlock()
+goback
+
+EXCEL:
+	rc = $tempfile(TempFile)
+	rc = $openfile(1,TempFile,"O")
+
+	fields[01]	= "TYPE"
+	fields[02]	= "DESCRIPTION"
+	fields[03]	= "Status"
+	fields[04]	= "MSA"
+	fields[05]	= "IPC Req?"
+	fields[06]	= "CARE"
+	fields[07]	= "Match Dur?"
+	fields[08]	= "Max Dur"
+	fields[09]	= "Min Dur"
+	fields[10]	= "Loc"
+	fields[11]	= "Recp"
+	fields[12]	= "Attend"
+	fields[13]	= "Care Days"
+	fields[14]	= "Group"
+	fields[15]	= "Sup Req"
+	fields[16]	= "Sup Phy"
+	fields[17]	= "UA Req?"
+	fields[18]	= "SP"
+	fields[19]	= "Alt SAC"
+	fields[20]	= "TP Req?"
+	fields[21]	= "SAC List"
+	fields[22]	= "RU List"
+	fields[23]	= "CON List"
+	(void) $putds( fields[], OutputLine, x"09")		' Build output record
+	(void) $writefile(1, OutputLine)				' Write out the Record
+	$clear(fields[])
+
+	ccnt = 1
+	do while ccnt <= $maxarray(pne_id[])
+		$clear(OutputLine, fields[])
+		fields[01] = pne_type[ccnt]
+		fields[02] = pne_desc[ccnt]
+		fields[03] = pne_status[ccnt]
+		fields[04] = pne_msa[ccnt]
+		fields[05] = pne_ipc[ccnt]
+		fields[06] = pne_carecode[ccnt]
+		fields[07] = pne_clstdur[ccnt]
+		fields[08] = $format(pne_maxdur[ccnt], "HH:MM")
+		fields[09] = $format(pne_minbill[ccnt], "HH:MM")
+		fields[10] = pne_loc[ccnt]
+		fields[11] = pne_recp[ccnt]
+		fields[12] = pne_attend[ccnt]
+		fields[13] = $format(pne_caredur[ccnt], "ZZZ")
+		fields[14] = pne_group[ccnt]
+		fields[15] = pne_sup_req[ccnt]
+		fields[16] = pne_sup_diff[ccnt]
+		fields[17] = pne_ua_req[ccnt]
+		fields[18] = pne_sp[ccnt]
+		fields[19] = $format(pne_alt_sac[ccnt], "ZZZZ")
+		fields[20] = pne_tp_req[ccnt]
+		fields[21] = pne_saclist[ccnt]
+		fields[22] = pne_rulist[ccnt]
+		fields[23] = pne_conlist[ccnt]
+		fields[24] = pne_sacverify[ccnt]
+		rc = $putds( fields[], OutputLine, x"09")		' Build output record
+		rc = $writefile(1,OutputLine)
+		ccnt = ccnt + 1
+	enddo
+
+	$clear(OutputLine)
+	rc = $writefile(1,OutputLine)
+
+	rc = $dbread(03, $operstaffid, s.ln, s.fn)
+	OutputLine = "Report run by " + s.fn + " " + s.ln + " on " +
+				 $format($today,"MM/DD/YYYY") + " at " +
+				 $format($timenow,"HH:MM") + x"09"
+	rc = $writefile(1,OutputLine)
+
+	rc = $closefile(1,"C")
+	(void)$fileToPC(TempFile, "excel", "D")
+	UnixCmd = "rm TempFile"
+	(void)$unix(UnixCmd)
+
+goback
+
+end PNEUPDATE
+
+%include inc_GetOption

@@ -1,0 +1,389 @@
+'This script is the NTAFTERSCRIPT entry point 1 for progress notes.
+'SCRIPT: pneentry1
+'AUTHOR: BOBBY DORRIS
+'DATE:   09/22/2004  Initial program
+'*******************************************************************************
+'RLE 20100707 .001 misc formatting
+'             used new includes
+'TJM 20110405 .002
+'             + reformatted error display
+'             + changed some validation logic to match 
+'                 lib_USREVENT changes
+
+%version 01.0.002 04/05/2011 GCC
+
+%desc This script is the NTAFTERSCRIPT entry point 1 for progress notes.
+%desc It is used to validate event entry information.
+
+%allow_nonmapped_io
+%maptest
+
+start PNEENTRYCR(title, client, option, parmfile, sdate, staff, cldur,sru,
+             stime, location, sdur, sac, thertype, recipient, attendance,
+             rtrncode, entrypoint)
+
+%include c_cldefLL
+%include c_clgetLL
+
+'**********************************VARIABLE DELCARATIONS************************
+   staff          is alpha
+   cldur          is time     $allowupdate(cldur)
+   sdur           is time     $allowupdate(sdur)
+   stime          is time     $allowupdate(stime)
+   sdate          is date     $allowupdate(sdate)
+   sru            is binary   $allowupdate(sru)
+   sac            is binary   $allowupdate(sac)
+   location       is alpha $allowupdate(location)
+   thertype       is alpha $allowupdate(thertype)
+   recipient      is alpha $allowupdate(recipient)
+   attendance     is alpha $allowupdate(attendance)
+   rtrncode       is alpha $allowupdate(rtrncode)
+   entrypoint     is alpha
+   
+   'allowable_days is the number of days a clinician has to enter events without
+   'authroization. See "STAFFOVR" for override access.
+   allowable_days is numeric  allowable_days = 3
+   dateok         is alpha
+   
+   string         is alpha
+   err-msg[]      is alpha
+   temp[]         is x
+   staff_id       is alpha
+   
+   subtitle       is x
+   t1             is x
+   cnt            is i
+   parm[]         is alpha
+   notetype       is alpha
+   rm             is binary
+   alt1           is alpha
+   alt2           is alpha
+   alt3           is alpha
+   date_override  is alpha
+   extend_date1   is date
+   extend_date2   is date
+   date_range     is date
+   continue       is alpha
+   cnp_ok         is alpha
+   no_show        is alpha
+   cancellation   is alpha
+   alt_sac        is alpha
+   
+   lib            is binary    'LIBRARY
+   lib_groups     is binary
+
+
+location = 1
+$clear(sac)
+
+$setstyle(".sb1", "font-family:times new roman", "font-size:12pt",
+              "color:red", "font-weight:bold")
+'*****************************************PROCEDURE SECTION*********************
+rc = $loadlib(lib, "lib_USREVENT")
+
+'Get event entry rules notetype from parmfile
+{lib}get_note_type(parmfile, notetype)
+
+'Is client not present allowed in parmfile
+cnp_ok = {lib}cnp_allowed(parmfile)
+
+'Is no show only allowed in parmfile
+no_show = {lib}no_show_only(parmfile)
+
+'Is no show only allowed in parmfile
+cancellation = {lib}cancel_only(parmfile)
+
+staff_id = $operstaffid
+rc = $dbread(2, client, c.fn, c.ln)
+
+$clear(sru)
+
+'Perform a check to see if current events information is correct
+if entrypoint = "0" OR entrypoint = "UA" then
+   rc = 1
+   goto MAIN
+endif
+
+gosub Check_Rule
+
+MAIN:
+sac = 1250
+'If rc is not 0, then something is wrong
+do while rc > 0
+   $submitopt("off","Next")
+   $cancelopt("off","Cancel")
+   $form("sacchk")
+'   subtitle = err-msg[1]
+   subtitle = "Stand Alone UA Progress Note Entry"
+   %include c_stylesheet
+   %include c_clformheaderLL
+
+   fn.scrn-hdr(title,subtitle)
+'Display error message returned from check_rule
+'   if err-msg[2] dp then
+   if err-msg[] dp then
+'      $br()
+'      $style("sb1")
+'      $tag(cntr)
+'      $text(err-msg[2])
+'      $tag(endcntr)
+'      $style("normal")
+      (void)$putds(err-msg[], string, "|")
+      string = "<ul><li>" + $replace("|", "</li><li>", string) + "</li></ul>"
+      $fieldset("Note Entry Errors", "error")
+         $tag(string)
+      $endfieldset()
+   endif
+   $br(2)
+
+'Allow user to change event information.
+   $table(t1)
+      $row()
+         $col("right")$text("Client","datatag")
+         $col("left")$text(c.fn)$text(c.ln)
+      $row()
+         $col("right")$text("Staff","datatag")
+            string = $dct(2071, staff, "D")
+         $col("left")$text(string)
+      $row()
+         $col("right")$text("Date of Service","datatag")
+         if entrypoint = "UA" or entrypoint = "UC" then
+            $col("left")$text(sdate)
+         else
+            $col("left")$textbox(sdate,"CAL",,8)
+         endif
+      $row()
+         $col("right")$text("Time of Service","datatag")
+         $col("left")$textbox(stime,"TIME",,7)
+      $row()
+         $col("right")$text("Staff Duration of Service","datatag")
+         $col("left")$textbox(sdur,"DUR",,7)
+      $row()
+         $col("right")$text("Client Duration of Service","datatag")
+         $col("left")$textbox(cldur,"DUR",,7)
+      $row()
+         $col("right")$text("Service Code","datatag")
+         string = $format(sac, "9999")
+         $col("left")$text(string)
+      $row()
+         $col("right")$text("RU","datatag")
+         $col("left")$textbox(sru,"RU",,4)$editmsg(sru)
+      $row()
+         $col("right")$text("Location","datatag")
+         $col("left")$textbox(location,"DCV``13",,2)$editmsg(location)
+      $row()
+         $col("right")$text("Recipient","datatag")
+         string = $dct(11, recipient, "D")
+         $col("left")$text(string)
+      $row()
+         $col("right")$text("Attendance","datatag")
+         string = $dct(12, attendance, "D")
+         $col("left")$text(string)
+   $endtable(t1)
+   $sendform("sacchk")
+
+   if $endbutton = "CANCEL" then
+      $reqcancel = "Y"
+      $returnerr = "Y"
+      rtrncode = "Y"
+      rc = 0
+      goto TheEnd
+   else
+       gosub Check_Rule
+   endif
+enddo
+
+'If called from entrypoint 5 as final check, then skip nag screens for date and
+'time.
+if entrypoint != "1" then
+   if entrypoint != "UA" then
+      rtrncode = "N"
+      goto TheEnd
+   endif
+endif
+
+'Display client name and date of service as a reminder to check both.
+CHKDATE:
+   $submitopt("on","Yes")
+   $cancelopt("on","No")
+   $form("datechk")
+
+   $table(t1)
+      $row()
+         string = "You have enter a service date of"
+         $col("center")$text(string, "datatag")
+      $row()
+         string = $format(sdate, "MM/DD/YYYY")
+         $col("center")$text(string, "error")
+      $row()
+         string = "For client"
+         $col("center")$text(string, "datatag")
+      $row()
+         string = c.fn + " " + c.ln + " (" + client + ")"
+         $col("center")$text(string, "error")
+      $row()
+         $col("center")$text("Is this correct?", "datatag")
+   $endtable(t1)
+   $sendform("datechk")
+
+   if $endbutton = "CANCEL" then
+      $reqcancel = "Y"
+      $returnerr = "Y"
+      rtrncode = "Y"
+      rc = 0
+      goto TheEnd
+   endif
+
+'If time of service is before usual business start time (7:00), then display
+'message to check for correct am/pm.
+if stime > 7:00 then
+   goto ALTSAC
+endif
+
+CHKTIME:
+   $submitopt("on","OK")
+   $cancelopt("on","Back")
+   $form("timechk")
+
+   $table(t1)
+      $row()
+         $col("center")$text("You have entered a start time of", "datatag")
+      $row()
+         string = $format(stime, "HH:MM AP")
+         $col("center")$text(string, "error")
+      $row()
+         $col("center")$text("which is earlier than 7:00 am.", "datatag")
+      $row()
+         $col("center")$text("If this is correct, select OK.", "datatag")
+   $endtable(t1)
+   $sendform("timechk")
+
+   if $endbutton = "CANCEL" then
+      $reqcancel = "Y"
+      $returnerr = "Y"
+      rtrncode = "Y"
+      rc = 0
+      goto TheEnd
+   endif
+
+if entrypoint = "UA" then
+   rtrncode = "N"
+   goto TheEnd
+endif
+
+'If UA is required for service but no valid UA exists, then notify staff and
+'change sac to non-billable code. If UA is ok, then exit.
+ALTSAC:
+if alt_sac = "Y" then
+   goto CHKALTSAC
+else
+   rtrncode = "N"
+   goto TheEnd
+endif
+
+CHKALTSAC:
+   $submitopt("on","Continue")
+   $cancelopt("on","Cancel")
+   $form("altsac")
+
+   $table(t1)
+      $row()
+         string = "This service requires a current valid assessment and " +
+                "there is no valid assesssment for this client."
+         $col("center")$text(string, "error")
+      $row()
+         string = "The SAC will be changed to " + $format(sac, "ZZZZ") +
+                " a Non-billable SAC. "
+         $col("center")$text(string, "error")
+'Give staff option of canceling event entry and correcting UA before continuing.
+      $row()
+         string = "If this is incorrect, select cancel and correct " +
+                "the UA before continuing"
+         $col("center")$text(string, "error")
+   $endtable(t1)
+   $sendform("altsac")
+
+   if $endbutton = "CANCEL" then
+      $reqcancel = "Y"
+      $returnerr = "Y"
+      rtrncode = "Y"
+      rc = 0
+   endif
+
+   rtrncode = "N"
+gosub TheEnd
+
+'****************************** begin Check_Rule Subroutine ********************
+Check_Rule:
+'Is the service date within the allowable days or staff has override
+'authroization.
+   dateok = {lib}check_date(allowable_days, sdate)
+
+   if dateok != "Y" then
+      err-msg[1] = "Service Date exceeds authorized entry time."
+      rc = 97
+      goback
+   endif
+'$trace("path", "timm_tracefile") $trace("on")
+   rc = {lib}check_pne_rules(notetype, sdate, cldur, sdur, stime, sac, sru,
+           err-msg[], client, location, recipient)
+
+'If current UA does not allow this type of service, rc=98. Display message and
+'prevent event entry.
+   if rc = 98 then
+      goback
+   endif
+
+'If event info is correct (rc=0) or an alternate sac is used (rc=99), then
+'check for overlapping event.
+'   if rc = 0 or rc = 99 then
+      if rc = 99 then
+         alt_sac = "Y"
+      endif
+'      rc = {lib}overlap_pne(err-msg[], sac, stime, cldur, sdate, staff_id,
+      rc = {lib}overlap_pne(temp[], sac, stime, cldur, sdate, staff_id,
+                       client, notetype,,recipient, location, attendance)
+      (void)$arraymerge(err-msg[], temp[])
+'   endif
+
+'If event info is ok and no overlapping events, then check for acceptable
+'combinations of loc, att, and recp codes.
+   if rc = 0 then
+      if cnp_ok = "Y" and attendance != "9" then
+         err-msg[1] = "Attendance must be 9 client not present."
+         rc = 9
+      elseif no_show = "Y" and attendance != "6" then
+         err-msg[1] = "Attendance must be 6 for no show only note."
+         rc = 9
+      elseif cancellation = "Y" and (attendance != "4" or attendance != "5")then
+         err-msg[1] = "Attendance must be 4 or 5 for cancellation only note."
+         rc = 9
+      elseif (attendance < "1" or attendance > "6") and cnp_ok != "Y" then
+         err-msg[1] = "Attendance code must be 1-6 for client related event."
+         rc = 9
+      elseif recipient < "1" or recipient > "6" then
+         err-msg[1] = "Recipient code must be 1-6 for client related event."
+         rc = 9
+      elseif (attendance >= "4" and attendance <= "6") and cldur > 0:00 then
+         err-msg[1] = "Duration must be zero for attendance code 4-6."
+         rc = 9
+      elseif attendance < "4" and (cldur = 0:00 or cldur !dp) then
+         err-msg[1] = "Duration must be greater than 0:00 for attendance " +
+                   "of 1, 2, 3."
+         rc = 9
+      elseif location = "8" and (attendance < "1" or attendance > "3") and
+            attendance != "6" then
+         err-msg[1] = "Attendance must be a 1, 2, 3 or 6 for telephone calls."
+         rc = 9
+      elseif attendance = "9" and cldur > 0:00 then
+         err-msg[1] = "Duration must be zero for attendance code 9."
+         rc = 9
+      endif
+   endif
+goback
+
+TheEnd:
+
+end PNEENTRYCR
+
+%include c_func-libLL

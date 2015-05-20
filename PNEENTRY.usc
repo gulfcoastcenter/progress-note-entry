@@ -1,0 +1,191 @@
+'This script is the NTAFTERSCRIPT entry point for progress notes.
+'SCRIPT: pneentry
+'AUTHOR: BOBBY DORRIS
+'DATE:   09/22/2004  Initial program
+'     01/16/2006 Changed sru to lsru due to installed patches
+'
+'RLE 20100308 .002 added logic to call outcome collection script (pneentry5cfo)
+'             when parmfile MHARLPO is in use
+'             .003 fixed logic to check for parmfile - not notetype
+'             .004 fixed staff vs notestaff
+'RLE 20100623 .005 passed SAC into PNESUPER
+'RLE 20100707 .006 removed includes
+'                  client_id to client
+'RLE 20100714 .007 added note time logging
+'RLE 20100715 .008 add parmfile in time logging call
+'RLE 20101011 .009 added future time warning call
+'RLE 20101018 .010 major script format changes - break into labels
+'  Moved pnewarntime to callpoint 3
+'TJM 20120326 .011
+'  - Added 'REDISPLAY' parm to allow parms decide to re show a note snapshot for printing or not
+'*******************************************************************************
+
+%version 01.1.011 03/26/2012 GCC
+%desc This script is the NTAFTERSCRIPT entry point for progress notes.
+
+'NOTE: variables are defined and called BY NAME not order!!
+Start PNEENTRY(title, client, option, parmfile, lsru, sdate, staff, cldur, stime,
+            location, sdur, sac, thertype, recipient, attendance, lof,
+            notestaff, gennote, ntopt[], objinfarr1[], ValuesV[]) by name
+
+'**********************************VARIABLE DELCARATIONS************************
+
+   rc             is b
+   parmfile       is x
+   client         is x
+   option         is x
+   title          is x
+   retcode        is x
+   retn-err       is alpha
+   TxtBxEntry[]   is alpha
+   ValuesV[]      is alpha
+   ntopt[]        is alpha    $allowupdate(ntopt[])
+   gennote        is alpha    $allowupdate(gennote)
+   objinfarr1[]   is alpha    $allowupdate(objinfarr1[])
+   notestaff      is alpha
+
+   lsru           is binary   $allowupdate(lsru)
+   sdate          is date     $allowupdate(sdate)
+   staff          is alpha
+   cldur          is time     $allowupdate(cldur)
+   stime          is time     $allowupdate(stime)
+   location       is alpha    $allowupdate(location)
+   sdur           is time     $allowupdate(sdur)
+   sac            is binary   $allowupdate(sac)
+   thertype       is alpha    $allowupdate(thertype)
+   recipient      is alpha    $allowupdate(recipient)
+   attendance     is alpha    $allowupdate(attendance)
+   lof            is alpha    $allowupdate(lof)
+
+   string         is alpha
+   snapid         is x
+   isevent        is text
+   notetype       is alpha
+   lib            is binary    'LIBRARY SCRIPT VARIABLE
+   snap_handle    is x
+   rtrncode       is alpha
+   
+   %common snap_handle
+   %global snap_handle
+'*****************************************PROCEDURE SECTION*********************
+
+gosub _init
+gosub _main
+return
+
+_main:
+   select $callpoint
+      case "1"
+         gosub chk_1
+      case "2"
+      case "3"
+         gosub chk_3
+      case "4"
+         gosub chk_4
+      case other
+         rc = $email("roberte@gcmhmr.com",$scriptid,`"Invalid callpoint: " + $callpoint`)
+         $brmsg("Invalid script callpoint.  MIS has been notified.",1,"CW")
+   endselect
+'=================================== end =========================================
+goback
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+chk_1:
+   if isevent != "N" then
+      'Call program to validate event information
+      call "PNEENTRY1" (title, client, option, parmfile, sdate, staff,
+                    cldur, lsru, stime, location, sdur, sac, thertype,
+                    recipient, attendance, rtrncode, $callpoint)
+      'User selected cancel or error occured, do not continue. Set variables to stay
+      'at callpoint.
+      if rtrncode = "Y" then
+         $returnerr = "Y"
+         return
+      endif
+
+      'Call program to see if supervising physician is needed. If so, place ID in lof.
+      call "PNESUPER" (client, parmfile, staff, lof, sac)
+   endif
+
+   'Call program to display lists and preload data in progress notes.
+   call "PNEENTRY1A" (parmfile, gennote, ntopt[],rtrncode)
+   'Call program to check is sup is required and super is a Locum Tenens doctors
+   if lof dp then
+      call "PNELOCTEN" (lof, sac)
+   endif
+
+   if rtrncode = "Y" then
+      $returnerr = "Y"
+      return
+   endif
+goback
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+chk_3:
+   '*warn for future event times
+   call "PNEWARNFUTURE" (parmfile,client,sdate,stime,sdur,sac,lsru,cldur)
+   if $returnerr = "Y" then
+      return
+   endif
+goback
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+chk_4:
+   'Call program to validate event information again prior to saving data to check
+   'for overlapping events which may have been entered while writing the note.
+   if lib:check_parm(parmfile, "REDISPLAY") = "Y" then
+      snapid = snap_handle:sn_getsnapid()
+      snap_handle:sn_viewsnap(snapid)
+   endif
+   if isevent != "N"
+      call "PNEENTRY1" (title, client, option, parmfile, sdate, staff,
+         cldur, lsru, stime, location, sdur, sac, thertype,
+         recipient, attendance, rtrncode, $callpoint)
+      if rtrncode = "Y" then
+         $reqcancel = "Y"
+         $returnerr = "Y"
+         return
+      else
+         'Call program to see if a care or ru record needed to be opened. Mainly used in
+         'MR. Only used is care code is assigned in PNEUPDATE or RU Open is Y in
+         'PNEUPDATE.
+         call "PNEENTRY5" (lsru, sac, sdate, staff, recipient, attendance, location,
+            client, title, parmfile, notetype, notestaff)
+
+         'Call program to record travel event.
+         call "PNEENTRY5A" (parmfile, client, sdate, stime, sdur, staff, lsru)
+         lib:get_note_type(parmfile, notetype)
+
+         'If note type is an injection, then call program to add medication event.
+         if notetype = "ECNAINJ" then
+            call "PNEENTRY5B" (client, sdate, stime, sdur, staff, lsru,
+            location, recipient, attendance, lof, ValuesV[])
+         endif
+      endif
+   endif
+ 
+
+   '*log/email future timed events
+   call "PNELOGTIME" (parmfile,client,sdate,stime,sdur,sac,lsru)
+
+   if parmfile = "MHARLPO" then
+      call "PNEENTRY5CFO" (parmfile,option,client,retcode,sdate,stime,sac,sdur,notestaff)
+   endif
+goback
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+_init:
+   rc = $regloadlib(lib, "lib_USREVENT")
+   if rc > 0 then
+      $brmsg($fmt(rc,"Error loading Library. CODE:99"),1,"CW")
+      $reqcancel = "Y"
+      $returnerr = "Y"
+      return
+   endif
+
+   'Check to see if note creates an event. If not skip event checking.
+   rc = $getparm( ,parmfile, "NTEVENT", isevent)
+goback
+
+end PNEENTRY
+

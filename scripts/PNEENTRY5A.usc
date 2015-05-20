@@ -1,0 +1,504 @@
+'This script is called by the NTAFTERSCRIPT at entry point 5 to add a travel
+'event.
+'SCRIPT: pneentry5a
+'AUTHOR: BOBBY DORRIS
+'DATE:   12/12/2004  Initial program
+'*******************************************************************************
+'
+'RLE 20091209 1.0.1 added exit button
+'             added logic to immediately exit when new button is pressed
+'             and when travel is not set to "Y".
+'RLE 20091230 1.0.2 modified validation to account for service date not always
+'                   being the same as the travel date
+'             1.0.3 added news
+'                   added day of week in dropdown
+'RLE 20091231 1.0.4 refined date/time validation to account for travel dates
+'                   being before/after service date
+'                   ~ modified code structure
+'RLE 20100204 .005 added support for MR integration with IPMRENTRY
+'                  script uses the event staff ID instead of the operator's
+'                  staff ID
+'RLE 20100707 .006 removed use of "client_id"
+'TJM 20101220 .007 Added 'are you sure' page for cancelling travel event when some info has been entered
+'                  Changed Error Validating/Display to capture and show all errors at once
+'                  Added Milage validation for entry and < 200 miles
+'                  Added Overlapping event validation
+'                  Added variables for location, recipient and attendance codes
+
+'%debug compile
+
+%version 01.0.007 12/20/2010 GCC
+%desc This script is called by the NTAFTERSCRIPT at entry point 5 to add a
+%desc travel event.
+
+%maptest
+%allow_nonmapped_io
+
+start PNEENTRY5A (parmfile, client, sdate, stime, dur, staff, sru)
+
+%include c_cldefLL
+'if parmfile = "__MR" then option = parmfile, $clear(parmfile) endif
+if parmfile dp then option = parmfile, $clear(parmfile) endif
+%include c_clgetLL
+
+'**********************************VARIABLE DELCARATIONS************************
+'EVENT SERVICE DSTS
+   e.date         is date     'EVENT DATE DST
+   e.staff        is alpha    'EVENT STAFF DST
+   e.case.no      is alpha    'EVENT CASE # DST
+   e.ser          is binary   'EVENT SERVICE DST
+   e.start        is time     'EVENT START TIME DST
+   e.dur          is time     'EVENT DURATION DST
+   e.cl.dur       is time     'EVENT CLIENT DURATION DST
+   e.ru           is binary   'EVENT RU DST
+   e.loc          is alpha    'EVENT LOCATION CODE DST
+   e.recip        is alpha    'EVENT RECIPENT CODE DST
+   e.att          is alpha    'EVENT ATTENDANCE CODE DST
+   e.no.rec       is binary   'EVENT NUMBER OF RECIPENTS DST
+   e.usr.i1       is integer  'EVENT TRAVEL MILEAGE
+
+   sdate          is date
+   staff          is alpha
+   stime          is time
+   dur            is time
+   sru            is binary
+   stime1         is time
+   stime2         is time
+   sdur1          is time
+   sdur2          is time
+
+   sdate1         is d
+   sdate2         is d
+
+   string         is alpha
+   err-msg[]      is alpha
+   staff_id       is alpha
+   travel         is alpha
+   travel_to      is alpha
+   travel_from    is alpha
+   travel_sac     is binary
+   travel_rec     is x        'recipient code
+   travel_att     is x        'attendance code
+   travel_loc     is x        'location code
+   end_time       is time
+   end_time1      is time
+   mileage1       is x
+   mileage2       is x
+
+   subtitle       is x
+   t1             is x
+   cnt            is i
+   parm[]         is alpha
+   notetype       is alpha
+
+   exit           is i
+   lib            is binary    'LIBRARY SCRIPT VARIABLE lib_DCRU
+   usreventlib    is b
+   temp[]         is x
+
+   dt1_drop[]     is d
+   dt2_drop[]     is d
+
+   news_20091230  is x
+'*****************************************PROCEDURE SECTION*********************
+
+gosub _init
+gosub _main
+return
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+_main:
+   do while exit < 1
+      gosub form1
+      select $endbutton
+         case "CANCEL"  
+         if travel = "Y" then
+            string = "Quit with out saving Travel Event?"
+            std_handle:std_infoPage("Exiting Progress Note", string,,"Quit without Saving", "Back")
+            if $endbutton = "SUBMIT" then
+               return
+            endif
+         else
+            return
+         endif
+
+      case "SUBMIT" 
+         if travel = "Y" then
+            gosub _validate
+            if rc = 0 then
+               gosub addEvent
+               exit++
+            endif
+         else
+            return
+         endif
+      endselect
+   enddo
+goback
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+form1:
+   $submitopt("off","Next")
+   $cancelopt("off","Exit")
+
+   $form("sacchk")
+   %include c_stylesheet
+   %include c_clformheaderLL
+'   subtitle = err-msg[1]
+
+   'fn.scrn-hdr(title,subtitle)
+   string = "{center}" + title + "{/center}"
+   $text(string, "h1")
+   
+   if err-msg[] dp then
+      (void)$putds(err-msg[], string, "|")
+      string = $replace("|", "{/li}{li}", string)
+      string = "{ul}{li}" + string + "{/li}{/ul}"
+      $fieldset("Note Entry Errors","error")
+         $text(string)
+      $endfieldset()
+   endif
+
+   if $today < 2/1/2010 then
+      $fieldset("News",,"h1")
+      $ctag(news_20091230)
+      $endfieldset()
+      $br(2)
+   endif
+
+   $text("Do you want to add a travel event?", "datatag")
+   $radio(travel, "Yes", "Y",,,"TRAVEL","TRAVEL")
+   $radio(travel, "No", "N")
+
+   $block("TRAVEL","TRAVEL")
+      $table("t1a")
+         $row()
+            $col(,,"5%")
+            $col("left")$text("Service Start Time:", "datatag")$text(stime)
+         $row()
+            $col(,,"5%")
+            $col("left")$text("Service End Time:", "datatag")$text(end_time)
+         $row()
+            $col(,,"5%")
+            $col("left")
+               $text("Add Travel Event to Service Location", "datatag")
+            $radio(travel_to, "Yes", "Y",,,"TRAVEL1","TRAVEL1")
+            $radio(travel_to, "No", "N")
+      $endtable("t1a")
+
+      $block("TRAVEL1","TRAVEL1")
+         $table("t1")
+         $row()
+            $col(,,"10%")
+            $col()
+               $text("Travel Date: ","datatag")
+
+               if $maxarray(dt1_drop[]) > 1 then
+                  $dropbox(sdate1,"-- Select a Date --","")
+               endif
+               i = 0
+               do while i++ < $maxarray(dt1_drop[])
+                  T = $fmt(dt1_drop[i],"DAY - ") + $fmt(dt1_drop[i],"MM/DD/YYYY")
+                  $dropbox(sdate1,T,dt1_drop[i])
+               enddo
+         $row()
+            $col(,,"10%")
+            $col("left")
+               $text("Begin Time of Travel","datatag")
+               $textbox(stime1,"TIME",,7)
+         
+         $row()
+            $col(,,"10%")
+            $col("left")
+               $text("Travel Time","datatag")
+               $textbox(sdur1,"DUR",,7)
+         
+         $row()
+            $col(,,"10%")
+            $col("left")
+               $text("Mileage","datatag")
+               $textbox(mileage1)
+         
+         $endtable("t1")
+      $endblock("TRAVEL1","TRAVEL1")
+
+      $table("t2a")
+      
+      $row()
+         $col(,,"5%")
+         $col("left")
+            $text("Add Travel Event from Service Location", "datatag")
+            $radio(travel_from, "Yes", "Y",,,"TRAVEL2","TRAVEL2")
+            $radio(travel_from, "No", "N")
+      
+      $endtable("t2a")
+
+      $block("TRAVEL2","TRAVEL2")
+         $table("t2")
+            $row()
+               $col(,,"10%")
+               $col()
+                  $text("Travel Date: ","datatag")
+                  if $maxarray(dt2_drop[]) > 1 then
+                     $dropbox(sdate2,"-- Select a Date --","")
+                  endif
+                  i = 0
+                  do while i++ < $maxarray(dt2_drop[])
+                     T = $fmt(dt2_drop[i],"DAY - ") + $fmt(dt2_drop[i],"MM/DD/YYYY")
+                     $dropbox(sdate2,T,dt2_drop[i])
+                  enddo
+         
+         $row()
+               $col(,,"10%")
+               $col("left")
+                  $text("Begin Time of Travel","datatag")
+                  $textbox(stime2,"TIME",,7)
+         $row()
+            $col(,,"10%")
+            $col("left")
+               $text("Travel Time","datatag")
+               $textbox(sdur2,"DUR",,7)
+         
+         $row()
+            $col(,,"10%")
+            $col("left")
+               $text("Mileage","datatag")
+               $textbox(mileage2)
+         
+         $endtable("t2")
+      $endblock("TRAVEL2","TRAVEL2")
+
+   $endblock("TRAVEL","TRAVEL")
+   $sendform("sacchk")
+
+goback
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+addEvent:
+
+   %debugstart
+   $brmsg("Debug mode - will not create events",1,"CW")
+   goback
+   %debugend
+
+   if travel = "Y" then
+      if travel_to = "Y" then
+         e.case.no   = client
+         e.staff     = staff_id
+         e.date      = sdate1
+         e.start     = stime1
+         e.ser       = travel_sac
+         e.ru        = sru
+         e.cl.dur    = 0:00
+         e.dur       = sdur1
+         e.loc       = "3"
+         e.recip     = "8"
+         e.att       = "9"
+         e.no.rec    = 0
+         e.usr.i1    = $num(mileage1)
+         rc = $insertevent(e.case.no, e.staff, e.date, e.start, e.ser, e.ru,
+                       e.cl.dur, e.dur, e.loc, e.recip, e.att, e.no.rec,
+                       e.usr.i1)
+
+         if rc > 0 then
+            string = "Error inserting event. (Error = " + $format(rc, "ZZ9") +
+                   "); Date = " + $format(e.date, "MM/DD/YY") + "; " +
+                   "Staff = " + e.staff + "."
+            $brmsg(string, 1, "W", "ERROR")
+         endif
+      endif
+
+      if travel_from = "Y" then
+         e.case.no   = client
+         e.staff     = staff_id
+         e.date      = sdate2
+         e.start     = stime2
+         e.ser       = travel_sac
+         e.ru        = sru
+         e.cl.dur    = 0:00
+         e.dur       = sdur2
+         e.loc       = "3"
+         e.recip     = "8"
+         e.att       = "9"
+         e.no.rec    = 0
+         e.usr.i1    = $num(mileage2)
+         rc = $insertevent(e.case.no, e.staff, e.date, e.start, e.ser, e.ru,
+                       e.cl.dur, e.dur, e.loc, e.recip, e.att, e.no.rec,
+                       e.usr.i1)
+
+         if rc > 0 then
+            string = "Error inserting event. (Error = " + $format(rc, "ZZ9") +
+                   "); Date = " + $format(e.date, "MM/DD/YY") + "; " +
+                   "Staff = " + e.staff + "."
+            $brmsg(string, 1, "W", "ERROR")
+         endif
+
+      endif
+   endif
+
+goback
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+_validate:
+   %debugstart
+      $trace("on,path","$SYS_/P/***trace")
+   %debugend
+   
+   $clear(err-msg[])
+   rc = 0
+
+   if travel_to = "Y" then
+      if sdate1 !dp then
+         (void)$arrPush(err-msg[], "Travel to date is required")
+      endif
+      if stime1 !dp then
+         (void)$arrPush(err-msg[], "Travel to Start time not defined")
+      endif
+      if sdur1 !dp then
+         (void)$arrPush(err-msg[], "Travel to Travel time not defined")
+      endif
+      if mileage1 !dp then
+         (void)$arrPush(err-msg[], "Travel to Mileage  no defined")
+      endif
+      if $maxarray(err-msg[]) = 0 then
+         'set the endtime based on the day
+         end_time1 = stime1 + sdur1
+         if sdate < sdate1 then
+            end_time1 -= 24:00
+         endif
+         if $num(miLeage1) > 200 then
+            (void)$arrPush(err-msg[], "Travel to Mileage Cannot Exceed 200 miles")
+         endif
+         if stime1 < stime then
+            if end_time1 > stime then
+               (void)$arrPush(err-msg[], "Travel to End time must be before service start time")
+               (void)$arrPush(err-msg[], 
+                  $fmt(stime, end_time1, "Service Time: HH:MM AP Travel to end time: HH:MM AP"))
+            endif
+         else
+            (void)$arrPush(err-msg[], "Travel to Start time must be before service start time.")
+            (void)$arrPush(err-msg[], 
+               $fmt(stime, stime1, "Service Time: HH:MM AP Travel to Start time: HH:MM AP"))
+         endif
+         'check for overlapping staff events
+         $clear(temp[])
+         temp[] = usreventlib:check_er_overlap("S", staff_id, travel_sac, sdate1, stime1, sdur1,, travel_rec, travel_Loc, notetype)[]
+         
+         %debugstart
+            $form("debug")
+            (void)$putds(temp[], string, "|")
+            $br()
+            $text(string)
+            $br()
+            (void)$putds(err-msg[], string, "|")
+            $text(string)
+            $sendform("debug")
+         %debugend
+         (void)$arraymerge(err-msg[], temp[])
+      endif
+   endif
+
+   if travel_from = "Y" then
+      if sdate2 !dp then
+         (void)$arrPush(err-msg[], "Travel from date is required")
+      endif
+      if stime2 !dp then
+         (void)$arrPush(err-msg[], "Travel from Start time not defined")
+      endif
+      if sdur2 !dp then
+         (void)$arrPush(err-msg[], "Travel from Travel time not defined")
+      endif
+      if mileage2 !dp then
+         (void)$arrPush(err-msg[], "Travel from Mileage  no defined")
+      endif
+      if $maxarray(err-msg[]) = 0 then
+         end_time = stime + dur
+         if sdate < sdate2 then
+            end_time -= 24:00
+         endif
+         if $num(miLeage2) > 200 then
+            (void)$arrPush(err-msg[], "Travel from Mileage Cannot Exceed 200 miles")
+         endif
+   
+         if stime2 < end_time then
+            (void)$arrPush(err-msg[], "Travel from Start time must be after service end time")
+            (void)$arrPush(err-msg[], 
+               $fmt(end_time,stime2, "Service end Time: HH:MM AP Travel from Start time: HH:MM AP"))
+         endif
+         'check for overlapping staff events
+         temp[] = usreventlib:check_er_overlap("S", staff_id, travel_sac, sdate2, 
+                                                                     stime2, sdur2,, travel_rec, 
+                                                                     travel_Loc, notetype)[]
+         (void)$arraymerge(err-msg[], temp[])
+      endif
+   endif
+
+   %debugstart
+      $trace("off")
+   %debugend
+
+   rc = $maxarray(err-msg[])
+goback
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+_init:
+   exit = 0
+   
+   'load usrevent lib
+   if $loadlib(usreventlib,"lib_USREVENT") > 0 then
+      $brmsg("Unable to load USREVENT lib. Please contact MIS",1,"WEC")
+      return
+   endif
+   
+   'get the notetype
+   notetype = usreventlib:get_note_type(parmfile)
+   staff_id    = $operstaffid
+   if option = "__MR" then
+      staff_id = staff
+      $clear(option)
+   endif
+
+   title       = "Travel Event Entry"
+   travel      = "N"
+   travel_to   = "N"
+   travel_from = "N"
+   travel_sac  = 9007
+   travel_rec  = "8"
+   travel_att  = "9"
+   travel_loc  = "3"
+   
+   end_time    = stime + dur
+
+   getOption(option)
+
+   if stime >= 10:00pm then
+      (void)$arrPush(dt2_drop[],`sdate + 1`)
+   endif
+
+   if stime <= 02:00am then
+      (void)$arrPush(dt1_drop[],`sdate - 1`)
+   endif
+
+   (void)$arrPush(dt1_drop[],sdate)
+   (void)$arrPush(dt2_drop[],sdate)
+
+   rc = $sort(dt1_drop[])
+   rc = $sort(dt2_drop[])
+goback
+
+__preload:
+%preload news_20091230 line-ending(cr)
+<span class="datatag">12/30/2009</span>
+<B>Notice:</b> The travel time program has been upgraded to allow
+travel dates that do not occur on the service date.
+<HR>
+The system will detect and allow for this when your service time falls between 10pm and 2am.
+Please select the appropriate date from the dropdown selection for your travel.
+<a href="mailto:helpdesk@gcmhmr.com?subject=Traveltime%20Update%20Question">Contact the HelpDesk</a> with any questions or concerns.
+%endpreload
+goback
+
+end PNEENTRY5A
+
+'%include c_func-libLL
+%include inc_GetOption

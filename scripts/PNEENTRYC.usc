@@ -1,0 +1,93 @@
+'This script is the NTAFTERSCRIPT entry point for specific childrens progress
+'notes. It is the same as pneentry except for calling pneentry1ac for pre-
+'loading data in the progress note.
+'SCRIPT: pneentryc
+'AUTHOR: BOBBY DORRIS
+'DATE:   09/30/2004  Initial program
+'*******************************************************************************
+'RLE 20100707 .001 misc formatting
+'             removed old includes
+'             removed client_id
+'RLE 20100715 .002 time logging
+'RLE 20101011 .003 future time warning
+'RLE 20101020 .004 moved time warning to callpoint 3
+
+%version 01.0.004 10/20/10 GCC
+
+%desc This script is the NTAFTERSCRIPT entry point for progress notes.
+
+start PNEENTRYC(title, client, option, parmfile, lsru, sdate, staff, cldur, stime,
+            location, sdur, sac, thertype, recipient, attendance,
+            notestaff, gennote, ntopt[], objinfarr1[]) by name
+
+'**********************************VARIABLE DELCARATIONS************************
+
+   rc             is b
+   parmfile       is x
+   option         is x
+   client         is x
+   retcode        is x
+   title          is x
+
+   retn-err       is alpha
+   TxtBxEntry[]   is alpha
+   ValuesV[]      is alpha
+   ntopt[]        is alpha $allowupdate(ntopt[])
+   gennote        is alpha $allowupdate(gennote)
+   objinfarr1[]   is alpha $allowupdate(objinfarr1[])
+   notestaff      is alpha
+   notetype       is alpha
+
+   lsru           is binary   $allowupdate(lsru)
+   sdate          is date     $allowupdate(sdate)
+   staff          is alpha
+   cldur          is time     $allowupdate(cldur)
+   stime          is time     $allowupdate(stime)
+   location       is alpha $allowupdate(location)
+   sdur           is time     $allowupdate(sdur)
+   sac            is binary   $allowupdate(sac)
+   thertype       is alpha $allowupdate(thertype)
+   recipient      is alpha $allowupdate(recipient)
+   attendance     is alpha $allowupdate(attendance)
+
+   rtrncode       is alpha
+   string         is alpha
+'*****************************************PROCEDURE SECTION*********************
+
+select $callpoint
+   case "1"
+      call "PNEENTRY1" (title, client, option, parmfile, sdate, staff,
+                    cldur, lsru, stime, location, sdur, sac, thertype,
+                    recipient, attendance, rtrncode, $callpoint)
+
+      if rtrncode = "Y" then
+         $returnerr = "Y"
+         return
+      endif
+      call "PNEENTRY1AC" (parmfile, gennote, ntopt[], objinfarr1[])
+      
+   case "2"
+
+   case "3"
+      '*warn for future event times
+      call "PNEWARNFUTURE" (parmfile,client,sdate,stime,sdur,sac,lsru,cldur)
+      if $returnerr = "Y" then
+         return
+      endif
+   case "4" or "5"
+      call "PNEENTRY1" (title, client, option, parmfile, sdate, staff,
+                    cldur, lsru, stime, location, sdur, sac, thertype,
+                    recipient, attendance, rtrncode, $callpoint)
+      if rtrncode = "Y" then
+         $returnerr = "Y"
+         return
+      else
+         call "PNEENTRY5" (lsru, sac, sdate, staff, recipient, attendance,
+                     location, client, title, parmfile, notetype, notestaff)
+         call "PNEENTRY5A" (parmfile, client, sdate, stime, sdur, staff, lsru)
+      endif
+
+      call "PNELOGTIME" (parmfile,client,sdate,stime,sdur,sac,lsru)
+endselect
+
+end PNEENTRYC

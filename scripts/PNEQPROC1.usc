@@ -1,0 +1,44 @@
+'This script is the NTAFTERSCRIPT entry point for progress notes.
+'SCRIPT: pneentry
+'AUTHOR: BOBBY DORRIS
+'DATE:	09/22/2004	Initial program
+'		01/16/2006 Changed sru to lsru due to installed patches
+'*******************************************************************************
+%version 01.01.00 01/16/2006 Verison 1.01
+%desc This script is the NTAFTERSCRIPT entry point for progress notes.
+'%include c_incmaps
+
+'NOTE: variables are defined and called BY NAME not order!!
+Start pneqproc1(sdate, stime, cldur, staff)
+
+'%include c_cldef
+'**********************************VARIABLE DELCARATIONS************************
+sdate			is date		$allowupdate(sdate)
+staff			is alpha	$allowupdate(staff)
+stime			is time		$allowupdate(stime)
+cldur			is time		$allowupdate(cldur)
+
+rc				is binary
+string			is alpha
+tempfile		is alpha
+outputline		is alpha
+fields[]		is alpha
+'*****************************************PROCEDURE SECTION*********************
+
+tempfile = $sysname + "/W/" + $oper + "." + $pid
+
+GETFILE:
+	rc = $openfile( 1 , tempfile, "I")				' Open the file for Output
+	rc = $readfile(1, OutputLine)				' Write out the Record
+	rc = $getds( fields[], OutputLine, x"2c")		' Build output record
+	rc = $closefile( 1 )							' Close the file for Output
+
+	sdate = fields[01]
+	staff = fields[02]
+	stime = fields[03]
+	cldur = fields[04]
+
+'=================================== end =========================================
+end pneqproc1
+'%include c_func-lib
+

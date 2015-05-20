@@ -1,0 +1,275 @@
+' Outcome tracking for telemed relapse F/U & prevention
+'*****************************************************************************
+'Called by NTAFERSCRIPT callpoint 5
+'See script PNEENTRY
+'
+' {{{ HEADER
+' Programmer: R.EDEKER
+' Date      : 20100308
+' Purpose   : 
+' TCF       : 
+' PARM      : 
+'
+' {{{ REVISIONS
+' }}}
+' }}}
+
+'%debug compile
+
+%version 01.0.000 03/08/10 GCC
+
+%maptest
+%allow_nonmapped_io
+
+start PNEENTRY5CFO (parmfile,option,client,retcode,sdate,stime,sac,sdur,staff_id)
+
+%include c_cldefLL
+title = "Crisis Follow-up / Relapse Prevention Outcome Collection"
+%include c_clgetLL
+
+   sdate    is d
+   stime    is t
+   sac      is b
+   sdur     is t
+   staff_id is x
+
+   err[]    is x
+   uid      is uid
+
+   C.CFO.REC      is r
+   C.CFO.DATE     is d
+   C.CFO.TIME     is t
+   C.CFO.STAFF    is x
+   C.CFO.OPER     is x
+   C.CFO.SER      is b
+   C.CFO.DUR      is t
+   C.CFO.TRANS    is x
+   C.CFO.TRANSO   is x
+   C.CFO.PPROB    is x
+   C.CFO.CLIENT   is x
+   C.CFO.TMED     is x
+   C.CFO.DISP     is x
+   C.CFO.DCWO     is x
+   C.CFO.HOSP     is x
+
+   c_cfo_trans    is x
+   c_cfo_transo   is x
+   c_cfo_pprob    is x
+   c_cfo_client   is x
+   c_cfo_tmed     is x
+   c_cfo_disp     is x
+   c_cfo_dcwo     is x
+   c_cfo_hosp     is x
+
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+gosub _init
+gosub _main
+return
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+_main:
+   nextdo = "FORM1"
+   do while 1 = 1
+      select nextdo
+         case "FORM1"
+            gosub frm_Main
+         case "SAVE"
+            gosub writeData
+         case "DONE"
+            goback
+      endselect
+   enddo
+goback
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+frm_Main:
+   $submitopt("on","Save")
+   $cancelopt("on","Cancel")
+   $form()
+   %include c_stylesheet
+   %include c_clformheaderLL
+
+  $ctag("<script type='text/javascript' src='/cmhcbui/cmhcbuilocal/overlib_mini.js'><!-- overLIB (c) Erik Bosrup --></script>")
+  $ctag("<div id='overDiv' style='position:absolute; visibility:hidden; z-index:1000;'></div>")
+
+   fn.scrn-hdr(title)
+   if $maxarray(err[]) > 0 then
+      $fieldset("Errors",,"error")
+      "LIB-html":render_ul(err[])
+      $endfieldset()
+   endif
+
+   $table(1,"tight","width='100%'")
+   $row()
+   $col()   $text("How did the client get to the E.R.?","datatag")
+   $col("right")
+   $col()
+   fn.dct-drop(7075,c_cfo_trans,"TRANS")
+   $dropbox(c_cfo_trans,"","",,,,,,"Y")
+
+   $block("TRANS","OTHER")
+      $fieldset("Other:",,"datatag")
+      $textbox(c_cfo_transo,"&X",25,25)
+      $endfieldset()
+   $endblock("TRANS","OTHER")
+
+   $row()
+   $col()   $text("Presenting Problem: ","datatag")
+   $col()
+   $col()   $dropboxdct(c_cfo_pprob,7076,"C",,,"Y")
+
+   $row()
+   $col()   $text("Status - Registered GCC Consumer?","datatag")
+   $col("right")
+   T = "<a href='javascript:void(0);' onmouseover=" + x"22" + "return overlib('Was the client a registered consumer with GCC prior to this visit?',"
+   + "MOUSEOFF,LEFT,BELOW,CAPTION,'Help');" + x"22" + " onmouseout='return nd();'>(Help)</a>"
+   $ctag(T)
+   $col()
+   $dropboxdct(c_cfo_client,29,,,,"Y")
+
+   $row()
+   $col()   $text("Was a Telemedicine Service provided? ","datatag")
+   $col()
+   $col()   $dropboxdct(c_cfo_tmed,29,,,,"Y")
+
+   $row()
+   $col()   $text("Disposition: ","datatag")
+   $col()
+   $col()
+   fn.dct-drop(7077,c_cfo_disp,"DISP")
+   $dropbox(c_cfo_disp,"","",,,,,,"Y")
+
+   $block("DISP","DCNOTM")
+      $fieldset("Describe the Disposition:",,"datatag")
+      $dropboxdct(c_cfo_dcwo,7078,"C")
+      $endfieldset()
+   $endblock("DISP","DCNOTM")
+
+   $block("DISP","HOSP")
+      $fieldset("Which Hospital?",,"datatag")
+      $dropboxdct(c_cfo_hosp,7079,"C")
+      $endfieldset()
+   $endblock("DISP","DCNOTM")
+
+   $endtable(1)
+
+   $sendform()
+
+   if $endbutton = "CANCEL" then
+      gosub frm_Cancel
+      if $endbutton = "SUBMIT" then return endif
+   else
+      gosub _validate
+      if $maxarray(err[]) = 0 then
+         nextdo = "SAVE"
+      endif
+   endif
+goback
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+frm_Cancel:
+   $submitopt("on","Yes Cancel")
+   $cancelopt("on","No")
+   $form()
+   %include c_stylesheet
+   %include c_clformheaderLL
+   fn.scrn-hdr(title,"Canel Entry")
+   $br(2)
+   $text("Are you sure you want to exit this process before saving?  ","datatag")
+   $text("This note type requires outcome data.","datatag")
+
+   $sendform()
+goback
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+_validate:
+   $clear(err[])
+   if c_cfo_trans !dp then
+      (void)$arrPush(err[],"Transportation field is required.")
+   endif
+
+   if $dct(7075,c_cfo_trans,"3") = "OTHER" then
+      if c_cfo_transo !dp then
+         (void)$arrPush(err[],"Other transportation field is required.")
+      endif
+   else
+      $clear(c_cfo_transo)
+   endif
+
+   if c_cfo_disp !dp then
+      (void)$arrPush(err[],"Disposition is required.")
+   endif
+
+   if $dct(7077,c_cfo_disp,"3") = "DCNOTM" then
+      if c_cfo_dcwo !dp then
+         (void)$arrPush(err[],"Disposition description required.")
+      endif
+      $clear(c_cfo_hosp)
+   endif
+
+   if $dct(7077,c_cfo_disp,"3") = "HOSP" then
+      if c_cfo_hosp !dp then
+         (void)$arrPush(err[],"Hospital is required.")
+      endif
+      $clear(c_cfo_dcwo)
+   endif
+
+goback
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'#thumb - save transo - validate stuff
+writeData:
+   C.CFO.REC[EFFD] = $today
+   C.CFO.DATE     = sdate
+   C.CFO.TIME     = stime
+   C.CFO.SER      = sac
+   C.CFO.DUR      = sdur
+   C.CFO.STAFF    = staff_id
+   C.CFO.OPER     = $oper
+   C.CFO.TRANS    = c_cfo_trans
+   C.CFO.TRANSO   = c_cfo_transo
+   C.CFO.PPROB    = c_cfo_pprob
+   C.CFO.CLIENT   = c_cfo_client
+   C.CFO.TMED     = c_cfo_tmed
+   C.CFO.DISP     = c_cfo_disp
+   C.CFO.DCWO     = c_cfo_dcwo
+   C.CFO.HOSP     = c_cfo_hosp
+
+   $dblock()
+   rc = $dbread(ClientDB,CID,CLN)
+   select fn.db-point-err(rc,ClientDB,CID)
+      case "CANCEL" draft_handle:dr_cancel(title,CID,2) goback
+      case "SUBMIT" goback
+   endselect
+
+   rc = $dbadddst(ClientDB,CID,C.CFO.REC,C.CFO.DATE,C.CFO.TIME,C.CFO.DUR,
+      C.CFO.SER,C.CFO.STAFF,C.CFO.OPER,C.CFO.TRANS,C.CFO.PPROB,C.CFO.CLIENT,
+      C.CFO.TMED,C.CFO.DISP,C.CFO.DCWO,C.CFO.HOSP,C.CFO.TRANSO)
+
+   retcode = rc
+   select fn.db-write-err(rc,ClientDB,CID)
+      case "CANCEL" draft_handle:dr_cancel(title,CID,2) goback
+      case "SUBMIT" goback
+   endselect
+
+   uid = C.CFO.REC[UID]
+
+   retcode = "0"
+   nextdo = "DONE"
+
+goback
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+_init:
+'   rc = $dctload(7077,disp_c[],disp_d[],,,disp_a3[])
+'   if rc > 0 then
+'      $brmsg($fmt(rc,"Error #99 loading DCT 7077"))
+'      return
+'   endif
+goback
+
+end PNEENTRY5CFO
+
+%include c_func-libLL

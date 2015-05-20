@@ -1,0 +1,56 @@
+start pne_consac()
+notetype		is alpha
+rc              is binary   'RETURN CODE
+rv              is binary   'RETURN CODE
+
+'DST
+pne.id			is alpha
+pne.type		is alpha
+pne.desc		is alpha
+pne.sac.rec		is header
+pne.sac			is binary
+pne.sup.req		is alpha
+pne.sup.diff	is alpha
+pne.con.rec 	is header
+pne.con.sac		is binary
+'************************************PROCEDURE SECTION********************
+$trace("path","tracelist") 
+'$trace("watch", ev_time, cldur[cnt], ev_date[cnt], cl_id, ProcCode, user_f3[cnt])
+$trace("on")
+$looplimit = 0
+		
+'NEEDED VARIABLES
+' tracefunctions
+lib_UTIL		is binary   'for library load
+traceFile		is binary   'the file where the output will go
+traceFields[]   	is alpha    'data to be displayed
+retcode			is binary
+tcnt			is integer 
+
+'TO LOAD THE LIBRARY: 
+retcode = $loadlib(lib_UTIL, "lib_UTIL")
+
+'TO OPEN FILE
+{lib_UTIL}openfile(,, traceFile, retcode)				
+	rc = $dbstart(59)
+	rc = $dbreadnext(59, pne.id, pne.sac.rec, pne.sac, pne.type, pne.con.rec, pne.con.sac)
+	do while rc < 3 and $loopcount < 5000
+			rv = 0
+			$clear(traceFields[])
+			tcnt = 1
+			traceFields[tcnt++] = pne.id
+			traceFields[tcnt++] = pne.type
+			traceFields[tcnt++] = pne.sac	     		
+			do while rv < 2 and $loopcount < 5000
+				traceFields[tcnt++] = pne.con.sac	
+				rv = $dbreadnextdst(59, pne.id, pne.sac.rec, pne.sac, pne.type, pne.con.rec, pne.con.sac)
+			enddo
+			'TO WRITE ONE LINE TO FILE
+		{lib_UTIL}tracedata(,, traceFile, traceFields[], retcode)			
+		rc = $dbreadnext(59, pne.id, pne.sac.rec, pne.sac, pne.type, pne.con.rec, pne.con.sac)
+	enddo
+DONE:
+'$trace("off")
+'TO CLOSE FILE
+{lib_UTIL}closefile(,, traceFile, retcode)
+end pne_consac

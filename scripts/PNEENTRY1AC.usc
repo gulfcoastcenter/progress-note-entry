@@ -1,0 +1,249 @@
+'This script is called by the NTAFTERSCRIPT at the end of entry point 1 for
+'progress notes. It is similar to pneenrty1a except some of the header are
+'hard coded. It is used specificaly for MH child parent training curriculum.
+'SCRIPT: pneentry1ac
+'AUTHOR: BOBBY DORRIS
+'DATE:   09/30/2004  Initial program
+'*******************************************************************************
+'RLE 20100707 .001 misc formatting
+'RLE 20100715 .002 added time logging
+'RLE 20101011 .003 replaced time logging with warning
+'RLE 20101020 .004 moved time warning to callpoint 3
+'             .005 removed warning code - shouldn't be needed due to only being used
+'                  in two non-event notes (ECNCCP,ECNCSP)
+
+%version 01.0.005 10/20/10 GCC
+
+%desc This script is called by the NTAFTERSCRIPT at the end of entry point 1 for
+%desc progress notes. It is used to pre-load data in the progress note templates.
+
+start PNEENTRY1AC(parmfile, gennote, ntopt[],objinfarr1[], client,sdate,stime,sdur,sac,lsru,cldur) by name
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+   parmfile       is alpha
+   gennote        is dbtext-l $allowupdate(gennote)
+   ntopt[]        is dbtext-l $allowupdate(ntopt[])
+   objinfarr1[]   is alpha $allowupdate(objinfarr1[])
+   
+   client         is x
+   sdate          is d
+   stime          is t
+   sdur           is t
+   sac            is b
+   lsru           is b
+   cldur          is t
+
+   text_in        is dbtext
+   rc             is numeric
+   continue       is alpha
+   string         is alpha
+   cnt            is numeric
+   dcnt           is numeric
+   fcnt           is numeric
+   cnt2           is numeric
+   filestr        is alpha
+   contstr        is alpha
+   filename       is alpha
+   dctstr         is alpha
+   dctnum         is binary
+
+   t1             is alpha
+   p_arr[]        is alpha
+
+   d_code[]       is alpha
+   d_desc[]       is alpha
+   d_act[]        is alpha
+   d_alt1[]       is alpha
+   d_text[]       is alpha
+   d_value[]      is alpha
+   listcnt[]      is numeric
+   content_txt    is dbtext
+   objectives[]   is alpha
+   ob_text[]      is dbtext
+
+'*****************************************PROCEDURE SECTION*********************
+filestr = $sysname + "/PNOTE/" + parmfile
+contstr = $sysname + "/PNOTE/"
+
+rc = $getparm( ,parmfile, "OBJECTIVEINF1",dctstr)
+dctnum = $parse(dctstr, 1, " ")
+if rc != 0 then
+   goto SKIPDCT
+endif
+
+rc = $dctloada(dctnum, d_code[], d_desc[], d_act[], d_alt1[])
+if rc != 0 then goto SKIPDCT endif
+
+   dcnt = 1
+   cnt = 1
+   fcnt = 0
+   do while dcnt <= $maxarray(d_code[])
+      if d_act[dcnt] = "A" then
+         filename = contstr + $uc(d_alt1[dcnt])
+         rc = $openfile(2,filename,"I")
+         if rc = 2 then
+            rc = $closefile(2,"C")
+            rc = $openfile(2,filename,"I")
+         endif
+         fcnt = 0
+         do while rc = 0
+            rc = $readfile(2, text_in)
+            if rc = 0 then
+               d_text[cnt] = text_in
+               cnt++
+               fcnt++
+            endif
+         enddo
+         listcnt[dcnt] = fcnt
+         rc = $closefile(2, "C")
+      endif
+      dcnt++
+   enddo
+
+   $submitopt("off","Next")
+   $cancelopt("off","Quit")
+   $form("DCT")
+   $tag("<CENTER>")
+    $text("{H1}Select Content Area for Note{/H1}")
+   $tag("</CENTER>")
+
+   $table(t1)
+   dcnt = 1
+   cnt = 1
+   do while dcnt <= $maxarray(d_code[])
+      if d_act[dcnt] = "A" then
+         $row()
+            $col() $checkbox(objinfarr1[dcnt], d_desc[dcnt], d_code[dcnt],,,
+                          d_code[dcnt], d_code[dcnt])
+            $block(d_code[dcnt],d_code[dcnt])
+               $table(d_code[dcnt])
+               fcnt = 0
+               do while fcnt < listcnt[dcnt]
+                  $row()
+                     $col()
+                     $checkbox(d_value[cnt], d_text[cnt], "Y")
+                        fcnt++ cnt++
+               enddo
+               $endtable(d_code[dcnt])
+            $endblock(d_code[dcnt],d_code[dcnt])
+      endif
+      dcnt++
+   enddo
+
+   $endtable(t1)
+   $sendform("DCT")
+
+   if $endbutton = "CANCEL" then
+      $reqcancel = "Y"
+      $returnerr = "Y"
+      rc = 0
+      goto TheEnd
+   endif
+
+   dcnt = 1
+   cnt = 1
+   fcnt = 0
+   do while dcnt <= $maxarray(listcnt[])
+      fcnt = listcnt[dcnt]
+      if objinfarr1[dcnt] dp then
+         content_txt = content_txt + "" + d_desc[dcnt] +
+                    " specifically focusing on: " + x"0a"
+      endif
+      cnt2 = 1
+      do while cnt2 <= fcnt
+         if d_value[cnt] = "Y" then
+            content_txt = content_txt + "=" + d_text[cnt] + x"0a"
+         endif
+         cnt++
+         cnt2++
+      enddo
+      dcnt++
+   enddo
+
+SKIPDCT:
+
+   filename = filestr + "-T1"
+   rc = $openfile(1,filename,"I")
+   if rc = 2 then
+      rc = $closefile(1,"C")
+      rc = $openfile(1,filename,"I")
+   endif
+
+   $submitopt("off","Next")
+   $cancelopt("off","Quit")
+   $form("T")
+   $tag("<CENTER>")
+    $text("{H1}Select Objectives Completed during Session{/H1}")
+   $tag("</CENTER>")
+   $table("t2")
+
+   cnt = 1
+   do while rc = 0
+      rc = $readfile(1, ob_text[cnt])
+      if rc = 0 then
+         $row()
+         $col()
+         $checkbox(objectives[cnt], ob_text[cnt], "Y")
+         cnt++
+      endif
+   enddo
+
+   $endtable("t2")
+   $sendform("T")
+   if $endbutton = "CANCEL" then
+      $reqcancel = "Y"
+      $returnerr = "Y"
+      rc = 0
+      goto TheEnd
+   endif
+
+gennote = ""
+dcnt = 1
+do while dcnt <= $maxarray(objectives[])
+   if objectives[dcnt] = "Y" then
+      gennote = gennote + ob_text[dcnt] + x"0a"
+   endif
+   dcnt++
+enddo
+
+
+fcnt = 2
+do while fcnt <= 9
+   filename = filestr + "-T" + $format(fcnt,"Z")
+
+   rc = $openfile(1,filename,"I")
+   if rc = 2 then
+      rc = $closefile(1,"C")
+      rc = $openfile(1,filename,"I")
+   endif
+
+   cnt = 1
+   if ntopt[fcnt] !dp then
+      do while rc = 0
+         rc = $readfile(1, text_in)
+         if rc = 0 then
+            ntopt[fcnt] = ntopt[fcnt] + text_in + x"0a"
+            if fcnt = 2 and cnt = 1 then
+               ntopt[fcnt] = ntopt[fcnt] + content_txt
+            endif
+         endif
+         cnt++
+      enddo
+   endif
+   fcnt++
+   rc = $closefile(1,"C")
+enddo
+THEEND:
+
+   '** not needed - see PNEENTRYC
+   'select $callpoint
+   '   case "3"
+   '   '*warn for future event times
+   '   call "PNEWARNFUTURE" (parmfile,client,sdate,stime,sdur,sac,lsru,cldur)
+   '   if $returnerr = "Y" then
+   '      return
+   '   endif
+   'endselect
+
+return
+
+end PNEENTRY1AC

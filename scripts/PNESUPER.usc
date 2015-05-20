@@ -1,0 +1,190 @@
+'This script is called by the NTAFTERSCRIPT at entry point 1 for progress notes.
+'SCRIPT: pnesuper
+'AUTHOR: BOBBY DORRIS
+'DATE:   12/12/2004  Initial program
+'
+' RLE    20090916
+'     Renamed 'Supervising Physician' to 'Ordering Physician'
+'     Added logic to only use 'ordering' for injection notes
+' RLE 20100623 added logic to accept a supervising therapist for certain
+'               note types
+'              optimized get_supervisor - using $find()
+'              added _validate label to separate the logic
+'              ensure staff ID != supervisor when sup_diff = "Y"
+'              removed therapist logic.
+'RLE 20100707 .007 client_id/client
+'             misc formatting
+'*******************************************************************************
+%version 01.0.007 07/07/10 GCC
+
+%desc This script is called by the NTAFTERSCRIPT at entry point 1 for progress
+%desc notes. It read the event entry rules to see is a supervior codes is
+%desc required. If so read rules to see if the code is for a physican of someone
+%desc else. If other, display screen to ask for staff id. Code is stored in LOF
+%desc of event.
+
+start PNESUPER (client, parmfile, staff, lof, sac)
+
+'**********************************VARIABLE DELCARATIONS************************
+   parmfile    is alpha
+   staff       is alpha
+   client      is alpha
+   lof         is alpha $allowupdate(lof)
+   sac         is b
+   
+   string      is alpha
+   notetype    is alpha
+   sup_req     is alpha
+   sup_diff    is alpha
+   staff_id    is alpha
+   staff_md    is alpha
+   lof_id      is alpha
+   rc          is binary
+   continue    is alpha
+   err_msg     is alpha
+   lib         is binary    'LIBRARY SCRIPT VARIABLE lib_DCRU
+
+'*****************************************PROCEDURE SECTION*********************
+
+rc = $loadlib(lib, "lib_USREVENT")
+staff_id = $operstaffid
+staff_md = is_super_md(staff_id)
+
+'Get event rules to see if supervisor is required and if it is a different staff
+{lib}get_note_type(parmfile, notetype)
+{lib}pne_supervisor(notetype, sup_req, sup_diff)
+
+if sup_req = "Y" and sup_diff = "N" then
+   lof = get_supervisor(staff_id)
+elseif sup_req = "Y" and sup_diff = "Y" and staff_md = "Y" then
+   lof = get_supervisor(staff_id)
+elseif sup_req = "Y" and sup_diff = "Y" and staff_md = "N" then
+   gosub GETSUPID
+   lof = get_supervisor(lof_id)
+endif
+return
+
+'If supervior must be someone other than staff entering event, then display
+'screen to ask for staff id.
+GETSUPID:
+continue = "Y"
+$clear(err_msg)
+do while continue = "Y"
+   $submitopt("off","Next")
+   $cancelopt("off","Cancel")
+   $form("getid")
+   $text("{H1}Select Supervisior.{/H1}")
+   $text(err_msg,"h1") $br()
+
+   $br(2)
+
+   if notetype = "ECNAINJ" then
+      'naming for injection notes
+      $text("Ordering Physician: ", "datatag")
+   elseif notetype = "ECNCINDC" then
+      $text("Supervisor (Therapy):","datatag")
+   else
+      $text("Supervising Physician: ", "datatag")
+   endif
+
+   $style("normal") $textbox(lof_id,"DB``3",8,10, "Y") $editmsg(lof_id)
+   $br(2)
+   $sendform("getid")
+
+   if $endbutton = "SUBMIT" then
+      gosub _validate
+      if err_msg dp then
+         continue = "Y"
+      endif
+   else
+      continue = "N"
+   endif
+enddo
+goback
+
+_validate:
+   $clear(err_msg)
+   if sup_diff = "Y" and lof_id = staff_id then
+      err_msg = "Supervisor MUST be different than the event staff ID"
+      goback
+   endif
+
+   'if notetype = "ECNCINDC" then
+   '   if is_super_ther(lof_id) = "Y" then
+   '      continue = "N"
+   '   else
+   '      err_msg = "Staff selected is not a supervising Therapist."
+   '   endif
+   'else
+      staff_md = is_super_md(lof_id)
+      if staff_md != "Y" then
+         err_msg = "Staff selected is not a physician."
+      else
+         continue = "N"
+      endif
+   'endif
+goback
+
+end PNESUPER
+
+'Function looks up the staff code in DCT 14 to be placed in LOF of event
+dynamic FUNCTION get_supervisor(sstaff_id) is alpha
+   sstaff_id   is alpha
+   rc          is binary
+   code[]      is alpha
+   a1[]        is alpha
+   x           is numeric
+
+   rc = $dctload(14, code[], , a1[])
+   x = $find(sstaff_id,a1[],,"F")
+   if x > 0 then
+      get_supervisor = code[x]
+      return
+   endif
+
+   'x = 1
+   'do while x <= $maxarray(a1[])
+   '  if a1[x] = sstaff_id then
+   '     get_supervisor = code[x]
+   '     return
+   '  endif
+   'x++
+   'enddo
+   $clear(get_supervisor)
+end get_supervisor
+
+'Functions checks the staff database to see if staff is a MD
+dynamic FUNCTION is_super_md(sstaff_id) is alpha
+   sstaff_id   is alpha
+   rc          is binary
+   s.discip    is alpha
+   staff_type  is alpha
+   credential  is alpha
+   
+   rc = $dbread(3, sstaff_id, s.discip)
+   rc = $dcv(60, s.discip, , staff_type)
+   credential = $left(staff_type, 2)
+   
+   select credential
+      case "MD" or "DO"
+         is_super_md = "Y"
+      case other
+         is_super_md = "N"
+   endselect
+end is_super_md
+
+dynamic FUNCTION is_super_ther(sstaff_id) is alpha
+   sstaff_id   is alpha
+   rc          is binary
+   s.discip    is alpha
+   staff_type  is alpha
+   credential  is alpha
+
+   rc = $dbread(3, sstaff_id, s.discip)
+   is_super_ther = "N"
+
+   if s.discip = "40" then
+      is_super_ther = "Y"
+   endif
+
+end is_super_ther

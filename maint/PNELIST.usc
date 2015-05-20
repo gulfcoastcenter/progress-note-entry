@@ -1,0 +1,271 @@
+'SCRIPT TO UPDATE PROGRESS NOTE EVENT RULES													*
+'AUTHOR: BOBBY DORRIS                                                                       *
+'DATE: 09/23/2004																			*
+'********************************************************************************************
+
+%include c_incmaps
+%allow_nonmapped_io
+'-----Internal|State version'
+%version 00.90.210 05/18/04
+
+start pnelist()
+
+%include c_cldef
+
+'**********************************VARIABLE DELCARATIONS*************************************
+'DST
+pne.id			is alpha
+pne.type		is alpha
+pne.desc		is alpha
+pne.carecode	is alpha
+pne.clstdur		is alpha
+pne.maxdur		is time
+pne.minbill		is time
+pne.loc			is alpha
+pne.recp		is alpha
+pne.attend		is alpha
+pne.caredur		is binary
+
+pne.sac.rec		is header
+pne.sac			is binary
+pne.ru.rec		is header
+pne.ru			is binary
+pne.con.rec		is header
+pne.con.sac		is binary
+pne.group		is alpha
+pne.sup.req		is alpha
+pne.sup.diff	is alpha
+
+'VARIABLES
+pne_id[]		is alpha
+pne_type[]		is alpha
+pne_desc[]		is alpha
+pne_carecode[]	is alpha
+pne_clstdur[]	is alpha
+pne_maxdur[]	is time
+pne_minbill[]	is time
+pne_loc[]		is alpha
+pne_recp[]		is alpha
+pne_attend[]	is alpha
+pne_caredur[]	is binary
+
+pne_sac[]		is binary
+pne_ru[]		is binary
+pne_con_sac[]	is binary
+
+pne_sac_uid[]	is numeric
+pne_ru_uid[]	is numeric
+pne_con_uid[]	is numeric
+
+pne_group[]		is alpha
+pne_sup_req[]	is alpha
+pne_sup_diff[]	is alpha
+
+'PROCEDURE VARIABLES
+sort_type[]		is alpha
+string         is alpha    'STAFF NAME STRING
+ucnt				is int
+y				is int
+rcnt			is numeric
+snum			is int		'number of matches found
+anum			is int		'Array Counter Variable
+rv				is binary	'Counter variable
+rid				is alpha	'Register ID
+uaradio        	is int    'UA RADION BUTTON
+continue		is alpha
+add_btn			is alpha
+upt_btn[]			is alpha
+del_btn[]			is alpha
+prt_btn			is alpha
+copy_btn[]			is alpha
+last_id			is alpha
+
+'******************************************SET FONT STYLES***********************************
+$setstyle(".sb3", "font-family:times new roman", "font-size:12pt", "color:blue", "font-weight:bold")
+$setstyle(".sb2", "font-family:times new roman", "font-size:12pt", "color:black")
+'*****************************************PROCEDURE SECTION**********************************
+
+gosub READREC
+
+continue = "Y"
+do while continue = "Y"
+	
+	$form("main")
+	$text("{H1}Progress Note Event Rule Update{/H1}")
+
+	$style("datatag")
+	$tag("<br/>")
+	$tag("<br/>")
+
+	$table("t2")
+	$style("sb3")
+	$row()
+		$col("center",,,"1","1")
+		$text("TYPE")
+		$col("center",,,"1","1")
+		$text("DESCRIPTION")
+		$col("center",,,"1","1")
+		$text("CARE")
+		$col("center",,,"1","1")
+		$text("Match Dur?")
+		$col("center",,,"1","1")
+		$text("Max Dur")
+		$col("center",,,"1","1")
+		$text("Min Dur")
+		$col("center",,,"1","1")
+		$text("Loc")
+		$col("center",,,"1","1")
+		$text("Recp")
+		$col("center",,,"1","1")
+		$text("Attend")
+		$col("center",,,"1","1")
+		$text("Care Days")
+		$col("center",,,"1","1")
+		$text("Group")
+		$col("center",,,"1","1")
+		$text("Sup Req")
+		$col("center",,,"1","1")
+		$text("Sup Diff")
+
+	ucnt = 1
+	$style("sb2")
+	do while ucnt <= $maxarray(pne_id[])
+		y = ucnt
+		uaradio = ucnt
+		$row()
+			$col()
+			$text(pne_type[ucnt])
+			$col()
+			$text(pne_desc[ucnt])
+			$col()
+			$text(pne_carecode[ucnt])
+			$col()
+			$text(pne_clstdur[ucnt])
+			$col()
+			string = $format(pne_maxdur[ucnt], "HH:MM")
+			$text(string)
+			$col()
+			string = $format(pne_minbill[ucnt], "HH:MM")
+			$text(string)
+
+			$col()
+			$text(pne_loc[ucnt])
+			$col()
+			$text(pne_recp[ucnt])
+			$col()
+			$text(pne_attend[ucnt])
+			$col()
+			string = $format(pne_caredur[ucnt], "ZZZ")
+			$text(string)
+			$col()
+			$text(pne_group[ucnt])
+			$col()
+			$text(pne_sup_req[ucnt])
+			$col()
+			$text(pne_sup_diff[ucnt])
+			
+		ucnt = ucnt + 1
+	enddo
+	$endtable("t2")
+
+	%include c_pbutton
+
+	$sendform("main")
+	$endform("main")
+
+	if $endbutton = "CANCEL" then
+		continue = "N"
+	endif
+enddo
+return
+
+READREC:
+	$brmsg("Searching Database. Please Wait", 1, "C",)
+	rv = $dbstart(59)
+
+	$clear(pne_id[],pne_type[],pne_desc[],pne_carecode[])
+	$clear(pne_clstdur[], pne_maxdur[], pne_minbill[])
+	$clear(pne_loc[], pne_recp[], pne_attend[], pne_caredur[])
+	$clear(pne_group[], pne_sup_req[], pne_sup_diff[])
+
+	anum = 1
+	rv = $dbreadnext(59, pne.id, pne.type, pne.desc, pne.carecode, pne.clstdur,
+					     pne.maxdur, pne.minbill, pne.loc, pne.recp, pne.attend,
+					     pne.caredur, pne.group, pne.sup.req, pne.sup.diff)
+
+	do while rv < 3
+		pne_id[anum] = pne.id
+		pne_type[anum] = pne.type
+		pne_desc[anum] = pne.desc
+		pne_carecode[anum] = pne.carecode
+		pne_clstdur[anum] = pne.clstdur
+		pne_maxdur[anum] = pne.maxdur
+		pne_minbill[anum] = pne.minbill
+		pne_loc[anum] = pne.loc
+		pne_recp[anum] = pne.recp
+		pne_attend[anum] = pne.attend
+		pne_caredur[anum] = pne.caredur
+		pne_group[anum] = pne.group
+		pne_sup_req[anum] = pne.sup.req
+		pne_sup_diff[anum] = pne.sup.diff
+		if last_id < pne_id[ucnt] then
+			last_id = pne_id[ucnt]
+		endif
+		string = $format(anum, "ZZZZZZ") + " Events Found."
+		$brmsg("Searching Database. Please Wait", 1, "C",)
+		$brmsg(string, 2, "C",)
+		anum = anum + 1
+
+		rv = $dbreadnext(59, pne.id, pne.type, pne.desc, pne.carecode, pne.clstdur,
+							 pne.maxdur, pne.minbill, pne.loc, pne.recp, pne.attend,
+							 pne.caredur, pne.group, pne.sup.req, pne.sup.diff)
+	enddo
+
+	rv = $sort(pne_desc[], pne_type[], pne_carecode[], pne_id[],pne_clstdur[],
+			   pne_maxdur[], pne_minbill[], pne_loc[], pne_recp[], pne_attend[],
+			   pne_caredur[], pne_group[], pne_sup_req[], pne_sup_diff[])
+goback
+
+GETSAC:
+	$clear(pne_sac[],pne_sac_uid[])
+	anum = 1
+	rv = $dbread(59, pne_id[ucnt], pne.sac.rec, pne.sac)
+	do while rv < 2
+		pne_sac[anum] = pne.sac
+		pne_sac_uid[anum] = pne.sac.rec[uid]
+		anum = anum + 1
+		rv = $dbreadnextdst(59, pne_id[ucnt], pne.sac.rec, pne.sac)
+	enddo
+	rv = $sort(pne_sac[], pne_sac_uid[])
+goback	
+
+GETRU:
+	$clear(pne_ru[],pne_ru_uid[])
+	anum = 1
+	rv = $dbread(59, pne_id[ucnt], pne.ru.rec, pne.ru)
+	do while rv < 2
+		pne_ru[anum] = pne.ru
+		pne_ru_uid[anum] = pne.ru.rec[uid]
+		anum = anum + 1
+		rv = $dbreadnextdst(59, pne_id[ucnt], pne.ru.rec, pne.ru)
+	enddo
+	rv = $sort(pne_ru[], pne_ru_uid[])
+goback	
+
+GETCON:
+	$clear(pne_con_sac[],pne_con_uid[])
+	anum = 1
+	rv = $dbread(59, pne_id[ucnt], pne.con.rec, pne.con.sac)
+	do while rv < 2
+		pne_con_sac[anum] = pne.con.sac
+		pne_con_uid[anum] = pne.con.rec[uid]
+		anum = anum + 1
+		rv = $dbreadnextdst(59, pne_id[ucnt], pne.con.rec, pne.con.sac)
+	enddo
+	rv = $sort(pne_con_sac[], pne_con_uid[])
+goback
+
+
+end pnelist
+
+%include c_func-lib

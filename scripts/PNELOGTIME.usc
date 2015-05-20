@@ -1,0 +1,103 @@
+'PNE - log future start times and email staff
+'RLE 20100715 .001 add parmfile to layout
+'RLE 20100721 .002 change to pipe-delimited layout for sql import
+'RLE 20101011 .003 changed logic to use end_time for future detection
+'                  added email to supervisor
+'RLE 20101012 .004 removed extra MIS email
+'RLE 20101027 .005 removed suzanne from mis_to[]
+'RLE 20101028 .006 removed robert/pam
+
+''%debug compile
+
+%version 01.0.006 10/28/10 GCC
+%define dl "|"
+
+start PNELOGTIME(parmfile,client,sdate,stime,sdur,sac,ru)
+
+   parmfile    is x
+   client      is x
+   sdate       is d
+   stime       is t
+   sdur        is t
+   sac         is b
+   ru          is b
+   
+   rc          is b
+   T           is x
+   log         is i
+   i           is i
+   end_time    is t
+   str         is x
+   tpl_email   is x
+
+   to[]        is x
+   mis_to[]    is x
+
+gosub _init
+gosub _main
+return
+
+_main:
+   if sdate = $today then
+      end_time = stime + sdur
+      if end_time > $timenow then
+         log:setLogFile(`$scriptid + ".log"`)
+         T = parmfile + dl + client
+         + $fmt(sdate,stime,sdur,sac,ru," MM/DD/YY HH:MM HH:MM 9999 9999")
+         T = $replace(" ",dl,T)
+         T = $replace(`dl + dl`,dl,T)
+         log:l(T)
+         'T = log:getLastLog()
+         'rc = $email(mis_to[],"DataBot:PNE:FUTURE TIME ALERT",T)
+         
+         str = tpl_email
+         str = $replace("%DATE%",$fmt(sdate,"MM/DD/YY"),str)
+         str = $replace("%TIME%",$fmt(stime,"HH:MMAP"),str)
+         str = $replace("%DUR%",$fmt(sdur,"HH:MM"),str)
+         str = $replace("%ENDTIME%",$fmt(end_time,"HH:MMAP"),str)
+         str = $replace("%TIMENOW%",$fmt($timenow,"HH:MMAP"),str)
+         str = $replace("%SAC%",$fmt(sac,"ZZZZ"),str)
+         str = $replace("%RU%",$fmt(ru,"ZZZZ"),str)
+         str = $replace("%CID%",client,str)
+         str = $replace("%STAFF%",$operstaffid,str)
+         
+         "lib_EMAIL":notify_staff($operstaffid,, to[1], , to[2])
+         %debugstart
+         $clear(to[])
+         to[1] = "roberte@gcmhmr.com"
+         %debugend
+         
+         rc = $email(to[],`"Future Time Note - " + client`,str,mis_to[])
+      endif
+   endif
+goback
+
+_init:
+   rc = $regloadlib(log,"LIB-log")
+
+   'mis_to[++i] = "pamm@gcmhmr.com"
+   'mis_to[++i] = "suzannej@gcmhmr.com"
+   %debugstart
+   $clear(i,mis_to[])
+   %debugend
+   'mis_to[++i] = "roberte@gcmhmr.com"
+
+goback
+
+__preload:
+%preload tpl_email line-ending(cr)
+*NOTICE*: A note/event was created in the future.
+
+Date: %DATE%
+Time: %TIME%
+Duration: %DUR%
+EndTime: %ENDTIME%
+Current Time: %TIMENOW%
+SAC: %SAC%
+RU: %RU%
+Client: %CID%
+Staff: %STAFF%
+%endpreload
+goback
+
+end PNELOGTIME

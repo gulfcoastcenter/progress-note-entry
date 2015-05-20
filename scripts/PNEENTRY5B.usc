@@ -1,0 +1,125 @@
+'This script is used to add a medication event for injections.
+'This script read the 3rd checkbox on a the injection progress note. If the
+'result is "Y", then medication is billable. Table 1 is medication name. Read
+'table 5 to get medication units or read DCT 9191 for units.
+'SCRIPT: pneentry5b
+'AUTHOR: BOBBY DORRIS
+'DATE:   12/12/2004  Initial program
+'     07/01/2005  Added changes for risperdal consta
+'     01/04/2006  Hard coded medication service RU to 1055
+'RLE 20100707 misc formatting, removed tabs
+'TJM 20120316 .003
+'  ~ changed e.ru coding to always use the sru argument passed to script
+'     this allows billing to recode the ru to the clinic address on claim
+
+'*******************************************************************************
+%version 01.0.002 07/07/10 GCC
+%desc This script is used to add a medication event for injections.
+
+start PNEENTRY5B(client, sdate, stime, dur, staff, sru,
+              loc, recip, att, lof, tables[])
+'**********************************VARIABLE DELCARATIONS************************
+'EVENT SERVICE DSTS
+   e.date      is date     'EVENT DATE DST
+   e.staff     is alpha 'EVENT STAFF DST
+   e.case.no   is alpha 'EVENT CASE # DST
+   e.ser    is binary   'EVENT SERVICE DST
+   e.start     is time     'EVENT START TIME DST
+   e.dur    is time     'EVENT DURATION DST
+   e.cl.dur is time     'EVENT CLIENT DURATION DST
+   e.ru     is binary   'EVENT RU DST
+   e.loc    is alpha 'EVENT LOCATION CODE DST
+   e.recip     is alpha 'EVENT RECIPENT CODE DST
+   e.att    is alpha 'EVENT ATTENDANCE CODE DST
+   e.lof    is alpha 'EVENT ATTENDANCE CODE DST
+   e.no.rec is binary   'EVENT NUMBER OF RECIPENTS DST
+   
+   s.discip is alpha 'lof staff credentials
+   rc          is binary
+   client      is alpha
+   sdate       is date
+   staff       is alpha
+   stime       is time
+   dur            is time
+   sru            is binary
+   lof            is alpha
+   tables[]    is alpha 'The code returned by a radio button for each list
+   units       is alpha
+   loc            is alpha
+   recip       is alpha
+   att            is alpha
+   staff_id    is alpha
+   lof_id         is alpha
+   alt1        is alpha
+   alt2        is alpha
+   alt3        is alpha
+   string         is alpha
+   begin_date     is date     begin_date = 07/01/2005
+
+'*****************************************PROCEDURE SECTION*********************
+
+staff_id = $operstaffid
+rc = $dcv(9191, tables[1], , ,alt1, alt2, alt3)
+lof_id = $dct(14, lof, "1")
+rc = $dbread(3, lof_id, s.discip)
+
+if tables[3] = "Y"
+   e.case.no = client
+   e.staff = staff_id
+   e.date = sdate
+   e.start = stime
+   if s.discip = "96" then
+      e.ser = alt3
+   else
+      e.ser = alt1
+   endif
+
+   e.ru = sru  'always use the original ru
+
+'   if e.date >= 9/1/2006 then
+'      e.ru = 5130                'Make ru medication ru
+'   else
+'      e.ru = sru
+'   endif
+
+   if alt2 dp then
+      e.cl.dur = $time(alt2)
+'      if e.date >= 9/1/2006 then
+'         e.ru = 5140             'Make ru the risperdal RU
+'      else
+'         e.ru = 1055
+'      endif
+   else
+      if tables[5] = "1" then
+         e.cl.dur = 0:01
+      elseif tables[5] = "2" then
+         e.cl.dur = 0:02
+      elseif tables[5] = "3" then
+         e.cl.dur = 0:03
+      elseif tables[5] = "4" then
+         e.cl.dur = 0:04
+      elseif tables[5] = "5" then
+         e.cl.dur = 0:05
+      else
+         e.cl.dur = 0:00
+      endif
+   endif
+   e.dur = 0:00
+   e.loc = loc
+   e.recip = recip
+   e.att = att
+   e.no.rec = 1
+   e.lof = lof
+
+   rc = $insertevent(e.case.no, e.staff, e.date, e.start, e.ser, e.ru,
+                 e.cl.dur, e.dur, e.loc, e.recip, e.att, e.no.rec, e.lof)
+
+   if rc > 0 then
+      string = "Error inserting event. (Error = " + $format(rc, "ZZ9") +
+             "); Date = " + $format(e.date, "MM/DD/YY") + "; " +
+             "Staff = " + e.staff + "."
+      $brmsg(string, 1, "W", "ERROR")
+   endif
+endif
+
+end PNEENTRY5B

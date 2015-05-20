@@ -1,0 +1,174 @@
+'This script is the NTAFTERSCRIPT entry point for progress notes.
+'SCRIPT: pneentry
+'AUTHOR: BOBBY DORRIS
+'DATE:	09/22/2004	Initial program
+'		01/16/2006 Changed sru to lsru due to installed patches
+'*******************************************************************************
+%version 01.01.00 01/16/2006 Verison 1.01
+%desc This script is the NTAFTERSCRIPT entry point for progress notes.
+
+'NOTE: variables are defined and called BY NAME not order!!
+Start pneqproc2(sdate, stime, cldur, staff_id)
+
+'%include c_cldef
+'**********************************VARIABLE DELCARATIONS************************
+qfile			is alpha	'qproc file
+pfile			is alpha	'parm file containing notetype
+
+client_id		is alpha
+lsru			is binary
+sdate			is date		$allowupdate(sdate)
+staff			is alpha	$allowupdate(staff)
+cldur			is time		$allowupdate(cldur)
+stime			is time		$allowupdate(stime)
+location		is alpha
+sdur			is time
+sac				is binary
+thertype		is alpha
+recipient		is alpha
+attendance		is alpha
+lof				is alpha
+
+staff_id		is alpha
+s.ln			is alpha
+s.fn			is alpha
+c.ln			is alpha
+c.fn			is alpha
+
+rc				is binary
+title			is alpha
+option			is alpha
+string			is alpha
+notetype		is alpha
+rtrncode		is alpha
+entrypoint		is alpha
+tempdir			is alpha
+filename		is alpha
+tempfile		is alpha
+outputline		is alpha
+fields[]		is alpha
+'*****************************************PROCEDURE SECTION*********************
+
+'Set client_id=$regid as work around to id changing bug. On second and following
+'callpoints, the client_id returned is incremented by one. $regid always returns
+'correct ID.
+
+
+client_id = $regid
+entrypoint = "0"
+title = "HRSA Progress Note"
+thertype = "P"
+tempfile = $sysname + "/W/" + $oper + "." + $pid
+
+rc = $openfile( 1 , tempfile, "I")				' Open the file for Output
+rc = $readfile(1, OutputLine)				' Write out the Record
+rc = $getds( fields[], OutputLine, x"2c")		' Build output record
+rc = $closefile( 1 )							' Close the file f
+
+sdate = fields[01]
+staff_id = fields[02]
+stime = fields[03]
+cldur = fields[04]
+sdur = fields[04]
+lsru = fields[05]
+sac = fields[06]
+location = fields[07]
+recipient = fields[08]
+attendance = fields[09]
+pfile = fields[10]
+
+rc = $dbread(3, staff_id, s.fn, s.ln)
+staff = s.fn + " " + s.ln
+rc = $dbread(2, client_id, c.fn, c.ln)
+
+	$submitopt("on","No")
+	$cancelopt("on","Yes")
+	$form("chkevt")
+
+	$tag("<CENTER>")
+	$text("{H1}Event Information{/H1}")
+	$tag("</CENTER>")
+
+'Allow user to change event information.
+	$table("t1")
+		$row()
+			$col("right")$text("Client","datatag")
+			$col("left")$text(c.fn)$text(c.ln)
+		$row()
+			$col("right")$text("Staff","datatag")
+			$col("left")$text(staff)
+		$row()
+			$col("right")$text("Date of Service","datatag")
+			$col("left")$text(sdate)
+		$row()
+			$col("right")$text("Time of Service","datatag")
+			rc = $getEditMsg(stime, "TIME", string)
+			$col("left")$text(stime)
+		$row()
+			$col("right")$text("Staff Duration of Service","datatag")
+			rc = $getEditMsg(sdur, "DUR", string)
+			$col("left")$text(string)
+		$row()
+			$col("right")$text("Client Duration of Service","datatag")
+			rc = $getEditMsg(cldur, "DUR", string)
+			$col("left")$text(string)
+		$row()
+			$col("right")$text("Service Code","datatag")
+			rc = $getEditMsg(sac, "SAM", string)
+			$col("left")$text(sac)$text("-")$text(string)
+		$row()
+			$col("right")$text("RU","datatag")
+			rc = $getEditMsg(lsru, "RU", string)
+			$col("left")$text(lsru)$text("-")$text(string)
+		$row()
+			$col("right")$text("Location","datatag")
+			string = $dct(13, location, "D")
+			$col("left")$text(location) $text("-")$text(string)
+		$row()
+			$col("right")$text("Recipient","datatag")
+			string = $dct(11, recipient, "D")
+			$col("left")$text(recipient) $text("-")$text(string)
+		$row()
+			$col("right")$text("Attendance","datatag")
+			string = $dct(12, attendance, "D")
+			$col("left")$text(attendance) $text("-")$text(string)
+	$endtable("t1")
+	$br() $text("Is event information correct?","datatag")
+
+	$sendform("chkevt")
+
+	if $endbutton = "CANCEL" then
+		rtrncode = "N"
+		return
+	endif
+
+
+'Call program to validate event information
+call "PNEENTRY1" (title, client_id, option, pfile, sdate, staff,
+				  cldur, lsru, stime, location, sdur, sac, thertype,
+				  recipient, attendance, rtrncode, entrypoint)
+
+if rtrncode = "Y" then
+	return
+else
+'write to temp file using pid
+	rc = $openfile( 1 , tempfile, "O")				' Open the file for Output
+	fields[01]	= sdate
+	fields[02]	= staff_id
+	fields[03]	= stime
+	fields[04]	= cldur
+	fields[05]	= lsru
+	fields[06]	= sac
+	fields[07]	= location
+	fields[08]	= recipient
+	fields[09]	= attendance
+	fields[10]	= pfile
+	(void) $putds( fields[], OutputLine, x"2c")		' Build output record
+	(void) $writefile(1, OutputLine)				' Write out the Record
+	rc = $closefile( 1 )							' Close the file for Output
+endif
+
+'=================================== end =========================================
+end pneqproc2
+'%include c_func-lib
+

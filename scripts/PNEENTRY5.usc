@@ -1,0 +1,311 @@
+'This script is used to open care records if necessary.
+'SCRIPT: pneentry5
+'AUTHOR: BOBBY DORRIS
+'DATE:   09/29/2004  Initial program
+'     02/13/2007  Redesigned to remove everything but opening care records
+'     05/10/2007  Add new logic for MR care assignments
+'RLE 20100707 removed includes
+'             client_id to client
+'TJM 20111114 .002   For: Dolly Laymance
+'  - removed care close function calls to stop auto closures when opening new
+'     assignments
+'     Care assignments with duration of 1 day will still 'auto' close
+'TJM 20120330 .003   For: Dolly Laymance
+'  - removed lib_CARE:active_ipc() call to prevent CBA open / close for clients
+'     that have old (unused) HCS ipc records hanging open from getting assignemnts opened.
+'*******************************************************************************
+%version 02.0.003 03/30/2012 GCC
+%desc This script is used to open care records if necessary.
+
+start PNEENTRY5(sru, sac, sdate, staff, recipient, attendance, location,
+            client, title, parmfile, notetype, notestaff)
+
+'**********************************VARIABLE DELCARATIONS************************
+   rc             is b
+   parmfile       is x
+   title          is x
+   sru            is binary
+   sac            is binary
+   sdate          is date
+   odate          is date
+   odate2         is date
+   staff          is alpha
+   client         is alpha
+   recipient      is alpha
+   attendance     is alpha
+   location       is alpha
+   notetype       is alpha
+   notestaff      is alpha
+                  
+   carecode       is alpha
+   carecode2      is alpha
+   caredur        is binary
+   opendate       is date
+   open_ru        is alpha
+   careopen       is alpha
+   careopen2      is alpha
+   msa            is alpha
+   ipc_type       is alpha
+   ipc_sdate      is date
+   ipc_edate      is date
+   r01a_open      is alpha
+   r014_open      is alpha
+   r017_open      is alpha
+   r019_open      is alpha
+   open_date      is date
+   end_date       is date
+   opencode       is alpha
+   tx_open_date   is date
+   tx_end_date    is date
+   tx_opencode    is alpha
+   tx_event       is alpha
+   edate          is date
+   string         is alpha
+   future         is alpha
+   c_code[]       is alpha
+   bdate[]        is date
+   mcnt           is binary
+   check_event    is alpha
+   lib_USREVENT   is binary   'LIBRARY SCRIPT VARIABLE
+   lib_CARE       is binary   'LIBRARY SCRIPT VARIABLE
+
+'*****************************************PROCEDURE SECTION*********************
+'if $sysname = "/c0/MIS" then
+'  return
+'endif
+
+'LOAD LIBRARIES
+rc = $regloadlib(lib_USREVENT, "lib_USREVENT")
+rc = $regloadlib(lib_CARE, "lib_CARE")
+
+if client = "000100" or client = "000101" then
+   goto TheEnd
+endif
+
+'GET NOTETYPE FROM PARMFILE
+if notetype !dp then
+   {lib_USREVENT}get_note_type(parmfile, notetype)
+endif
+
+'FIND CARE CODE FROM EVENT RULES DATABASE.
+'IF NOT PRESENT, THEN DO NOT OPEN ANYTHING AND EXIT
+{lib_USREVENT}pne_carecode(carecode, notetype, sac, sru, location,
+                     recipient, attendance, caredur)
+
+if carecode !dp then
+   goto TheEnd
+endif
+
+if carecode = "R019" and sdate < 9/1/2007 then
+   if recipient = "2" or recipient = "3" then
+      goto TheEnd
+   endif
+endif
+
+'CHECK IS CARE CODE IS CURRENTLY OPEN
+careopen = {lib_CARE}check_care(client, carecode, sdate, odate)
+'If event date is past encounter submit date then skip opening care
+if careopen = "S" then
+   goto TheEnd
+endif
+
+'Find Major Service Area
+msa = {lib_USREVENT}pne_msa(notetype)
+if msa = "MR" then
+   goto MRSERVICES
+endif
+
+'IF CARE CODE IS NOT OPEN, THEN OPEN
+if careopen = "O" then
+   {lib_CARE}open_care(client, carecode, sdate, notestaff)
+   if caredur = 1 then        'IF DURATION IS ONE DAY, THEN CLOSE CARE ALSO
+      {lib_CARE}close_care(client, carecode, sdate, sdate, notestaff)
+   endif
+elseif careopen = "U" then
+   {lib_CARE}delete_care(client, carecode, odate)
+   {lib_CARE}open_care(client, carecode, sdate, notestaff)
+endif
+goto TheEnd
+
+MRSERVICES:
+'If msa is for MR services, use advanced rules
+'   {lib_CARE}active_ipc(client, ipc_type, ipc_sdate, ipc_edate)
+'   if ipc_type = "HC" then
+'      goto TheEnd
+'   endif
+
+   tx_event = "N"
+   select carecode
+      case "R005"
+         goto R005
+      case "R014"
+         goto R014
+      case "R017"
+         goto R017
+      case "R019"
+         goto R019
+      case "R021"
+         goto R021
+      case "R022"
+         goto R022
+      case "R023"
+         goto R023
+      case "R041"
+         goto R041
+      case "R042"
+         goto R042
+      case "R053"
+         goto R053
+      case "R054"
+         goto R054
+      case other
+         goto TheEnd
+   endselect
+
+'=============================== R014 =========================================
+R014:
+   if ipc_type = "TX" and sdate >= ipc_sdate and sdate <= ipc_edate then
+      tx_event = "Y"
+   endif
+R017:
+R019:
+'determine if one of the sc codes is currently open
+   r014_open = {lib_CARE}care_date(client, "R014", sdate)
+   r017_open = {lib_CARE}care_date(client, "R017", sdate)
+   r019_open = {lib_CARE}care_date(client, "R019", sdate)
+   r01a_open = {lib_CARE}care_date(client, "R01A", sdate)
+
+'if one of the codes is open and matches the carecode, then exit
+   if r014_open = "Y" or r017_open = "Y" or r019_open = "Y" then
+      if carecode = "R014" and r014_open = "Y" and
+         tx_event = "Y" and r01a_open = "Y" then
+         goto TheEnd
+      elseif carecode = "R014" and r014_open = "Y" and tx_event != "Y" then
+         goto TheEnd
+      elseif carecode = "R017" and r017_open = "Y" then
+         goto TheEnd
+      elseif carecode = "R019" and r019_open = "Y" then
+         goto TheEnd
+      else  'find which code is open
+         if r014_open = "Y" then
+            opencode = "R014"
+         elseif r017_open = "Y" then
+            opencode = "R017"
+         elseif r019_open = "Y" then
+            opencode = "R019"
+         endif
+      endif
+   endif
+
+'check for TxHmL
+   if r01a_open = "Y" then
+      tx_opencode = "R01A"
+   endif
+
+   if (tx_event = "Y" and carecode != "R014") or
+      (tx_event != "Y" and tx_opencode dp) then
+      string = "client=" + client + " sdate=" + sdate +
+             " staff=" + notestaff + " sac=" + sac
+   endif
+
+'if no open code was found for event date, then open code
+   if opencode !dp then
+      goto OPENCARE
+   endif
+
+'see if assignment open during the event date has a end date
+   {lib_CARE}get_care_assign(client, opencode, sdate, open_date, end_date)
+   if tx_opencode dp then
+      {lib_CARE}get_care_assign(client, tx_opencode, sdate, tx_open_date,
+                          tx_end_date)
+   endif
+
+'get day before event date
+   edate = sdate - 1
+   if end_date !dp then 'assignment is currently open but not event code
+      'check to make sure end date is not before open date. If not then
+      'close open assignment day before event
+      if edate >= open_date then
+         '{lib_CARE}close_care(client,opencode,open_date,edate,notestaff)
+      'R014 takes precedents over other codes
+      elseif edate < opendate and carecode = "R014" then
+         {lib_CARE}delete_care(client, opencode, open_date)
+      elseif edate < opendate and opencode = "R014" then
+         goto TheEnd 'leave R014 open and exit
+      endif
+   elseif end_date > open_date then
+      'delete code and add new end date
+      {lib_CARE}delete_care(client, opencode, open_date, end_date)
+      {lib_CARE}open_care(client, opencode, open_date, notestaff)
+      '{lib_CARE}close_care(client, opencode, open_date, edate, notestaff)
+   elseif open_date = end_date
+      if carecode = "R014" then  'R014 takes precedents over other codes
+         '{lib_CARE}delete_care(client, opencode, open_date, end_date)
+      elseif opencode = "R014" then
+         goto TheEnd 'leave R014 open and exit
+      endif
+   endif
+
+OPENCARE:
+'IF CARE CODE IS NOT OPEN, THEN OPEN
+   {lib_CARE}open_care(client, carecode, sdate, notestaff)
+   if caredur = 1 then        'IF DURATION IS ONE DAY, THEN CLOSE CARE ALSO
+      {lib_CARE}close_care(client, carecode, sdate, sdate, notestaff)
+   endif
+   if ipc_type = "TX" and r01a_open != "Y" and
+      carecode = "R014" and sdate >= ipc_sdate and sdate <= ipc_edate then
+      {lib_CARE}open_care(client, "R01A", sdate, notestaff)
+   endif
+
+'if there the same code open with future date?
+   future = {lib_CARE}future_code(client, carecode, sdate, open_date, end_date)
+   if future = "Y" then
+'delete record if it is the next record
+      {lib_CARE}delete_care(client, carecode, open_date, end_date)
+      if end_date dp then
+'if record was closed then close current record.
+         {lib_CARE}close_care(client, carecode, open_date, end_date, notestaff)
+      endif
+   endif
+
+'check for multiple overlapping service coordination codes in a row.
+'   {lib_CARE}check_scopen(client, c_code[], bdate[])
+'   mcnt = $maxarray(bdate[])
+'   do while mcnt >= 2
+'      edate = bdate[mcnt] - 1
+'      '{lib_CARE}close_care(client, c_code[1], bdate[1], edate, notestaff)
+'      $clear(bdate[],c_code[])
+'      {lib_CARE}check_scopen(client, c_code[], bdate[])
+'      mcnt = $maxarray(bdate[])
+'   enddo
+
+goto TheEnd
+
+R005:
+R021:
+R022:
+R023:
+R041:
+R042:
+R053:
+R054:
+'IF CARE CODE IS NOT OPEN, THEN OPEN
+if careopen = "O" then
+   {lib_CARE}open_care(client, carecode, sdate, notestaff)
+   if caredur = 1 then        'IF DURATION IS ONE DAY, THEN CLOSE CARE ALSO
+      {lib_CARE}close_care(client, carecode, sdate, sdate, notestaff)
+   endif
+elseif careopen = "U" then
+   {lib_CARE}delete_care(client, carecode, odate)
+   {lib_CARE}open_care(client, carecode, sdate, notestaff)
+endif
+goto TheEnd
+
+'********************************** begin TheEnd Subroutine ************************
+TheEnd:
+'=================================== end TheEnd Subroutine =========================
+
+end PNEENTRY5
+
+'%include c_func-lib
+

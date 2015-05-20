@@ -1,0 +1,175 @@
+'PNE - log future start times and email staff
+
+'RLE 20101011 created from PNELOGTIME to warn staff
+'RLE 20101012 removed extra MIS email
+'RLE 20101014 disabled supervisor email
+'RLE 20101018 allow update of start time and duration - validate when changed
+
+''%debug compile
+
+%version 01.0.004 10/18/10 GCC
+%define dl "|"
+%define cn_email "N"
+%define cn_mis_email "N"
+
+start PNEWARNFUTURE(parmfile,client,sdate,stime,sdur,sac,ru,cldur)
+
+   parmfile    is x
+   client      is x
+   sdate       is d
+   stime       is t
+   end_time    is t
+   sdur        is t
+   cldur       is t
+   sac         is b
+   ru          is b
+   tmp_stime   is t
+   tmp_sdur    is t
+   
+   rc          is b
+   T           is x
+   log         is i
+   i           is i
+   tpl_email   is x
+   str         is x
+
+   to[]        is x
+   mis_to[]    is x
+   $allowupdate(stime)
+   $allowupdate(sdur)
+   $allowupdate(cldur)
+
+gosub _init
+gosub _main
+return
+
+_main:
+   if sdate = $today then
+      end_time = stime + sdur
+      if end_time > $timenow then
+         log:setLogFile(`$scriptid + ".log"`)
+         T = parmfile + dl + client
+         + $fmt(sdate,stime,sdur,sac,ru," MM/DD/YY HH:MM HH:MM 9999 9999")
+         T = $replace(" ",dl,T)
+         T = $replace(`dl + dl`,dl,T)
+         log:l(T)
+         if cn_mis_email = "Y" then
+            T = log:getLastLog()
+            rc = $email(mis_to[],"DataBot:PNE:FUTURE TIME *WARNING*",T)
+         endif
+         
+         if cn_email = "Y" then         
+            str = tpl_email
+            str = $replace("%DATE%",$fmt(sdate,"MM/DD/YY"),str)
+            str = $replace("%TIME%",$fmt(stime,"HH:MMAP"),str)
+            str = $replace("%DUR%",$fmt(sdur,"HH:MM"),str)
+            str = $replace("%ENDTIME%",$fmt(end_time,"HH:MMAP"),str)
+            str = $replace("%TIMENOW%",$fmt($timenow,"HH:MMAP"),str)
+            str = $replace("%SAC%",$fmt(sac,"ZZZZ"),str)
+            str = $replace("%RU%",$fmt(ru,"ZZZZ"),str)
+            str = $replace("%CID%",client,str)
+            str = $replace("%STAFF%",$operstaffid,str)
+            
+            "lib_EMAIL":notify_staff($operstaffid,, to[1], , to[2])
+            %debugstart
+            $clear(to[])
+            to[1] = "roberte@gcmhmr.com"
+            %debugend
+            
+            rc = $email(to[],`"Future Time Note Warning - " + client`,str,mis_to[])
+         endif
+
+         gosub frm_Warning
+         if $endbutton = "CANCEL" then
+            $returnerr = "Y"
+            goback
+         else
+            '* they clicked submit - check for changes and run through validation
+            ' again
+            if tmp_stime != stime or tmp_sdur != sdur then
+               stime = tmp_stime
+               sdur  = tmp_sdur
+               cldur = sdur
+               gosub _main
+               goback
+            endif
+         endif
+      endif
+   endif
+goback
+
+
+frm_Warning:
+   tmp_stime = stime
+   tmp_sdur  = sdur
+
+   $submitopt("on","Continue")
+   $cancelopt("on","Cancel")
+
+   $form()
+   $text("{center}")
+   $text("Progress Note Future Time Warning","h1")
+   $br(2)
+   T = "Notice:  You are attempting to create this progress note in the future.  "
+   + "Please verify your information before proceeding."
+   $text(T,"datatag")
+   $table(1,"tight","border='1' width='50%'")
+   $row()
+   $col()   $text("Date","datatag")
+   $col()   $text(sdate)
+   $row()
+   $col()   $text("Time","datatag")
+   $col()   $textbox(tmp_stime,"TIME",7,7,"Y")
+   $row()
+   $col()   $text("Duration","datatag")
+   $col()   $textbox(tmp_sdur,"DUR",7,7,"Y")
+   $row()
+   $col()   $text("End Time","datatag")
+   $col()   $text(end_time)
+   $row()
+   $col()   $text("Current Time","datatag")
+   $col()   $text($timenow)
+   $row()
+   $col()   $text("SAC","datatag")
+   $col()   $text(sac)
+   $row()
+   $col()   $text("RU","datatag")
+   $col()   $text(ru)
+   $endtable(1)
+   
+   $br()
+   T = "{I}Please adjust your start time and/or duration if necessary.  "
+   + "Note: If any changes are made the system will validate your entry a second time.{/i}"
+   $text(T,"datatag")
+   $sendform()
+goback
+
+_init:
+   rc = $regloadlib(log,"LIB-log")
+
+   mis_to[++i] = "pamm@gcmhmr.com"
+   mis_to[++i] = "suzannej@gcmhmr.com"
+   %debugstart
+   $clear(i,mis_to[])
+   %debugend
+   mis_to[++i] = "roberte@gcmhmr.com"
+
+goback
+
+__preload:
+%preload tpl_email line-ending(cr)
+Notice, staff received a warning regarding a future event.
+Date: %DATE%
+Time: %TIME%
+Duration: %DUR%
+EndTime: %ENDTIME%
+Current Time: %TIMENOW%
+SAC: %SAC%
+RU: %RU%
+Client: %CID%
+Staff: %STAFF%
+%endpreload
+
+goback
+
+end PNEWARNFUTURE

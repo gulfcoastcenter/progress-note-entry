@@ -1,0 +1,38 @@
+'This script is called by the NTAFTERSCRIPT at entry point 1 for progress notes.
+'SCRIPT: pnelocten
+'AUTHOR: BOBBY DORRIS
+'DATE:	1/4/2007	Initial program
+'*******************************************************************************
+'RLE 20100707 .002 misc formatting
+
+%version 01.0.002 07/07/10 GCC
+
+%desc This script is called by the NTAFTERSCRIPT at entry point 1 for progress
+%desc notes. It is used to correct SAC entries for Locum Tenens doctors.
+
+start PNELOCTEN(lof, sac)
+
+'**********************************VARIABLE DELCARATIONS************************
+   lof				is alpha
+   sac				is binary	$allowupdate(sac)
+   staff_id		   is alpha
+
+   rc				   is binary
+   s.discip		   is alpha
+   staff_type		is alpha
+   credential		is alpha
+
+   lib				is binary    'LIBRARY SCRIPT VARIABLE lib_DCRU
+
+'*****************************************PROCEDURE SECTION*********************
+
+staff_id = $dct(14, lof, "1")
+rc = $dbread(3, staff_id, s.discip)
+
+if s.discip = "96" then			'Staff is a Locum Tenens doctor
+	if sac = 2100 then			'If SAC is injection admin,
+		sac = 2101				'change to lt SAC
+	endif
+endif
+
+end PNELOCTEN

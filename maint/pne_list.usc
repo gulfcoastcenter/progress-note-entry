@@ -1,0 +1,107 @@
+start pne_list()
+notetype		is alpha
+rc              is binary   'RETURN CODE
+
+'DST
+pne.id			is alpha
+pne.type		is alpha
+pne.desc		is alpha
+pne.carecode	is alpha
+pne.clstdur		is alpha
+pne.maxdur		is time
+pne.minbill		is time
+pne.loc			is alpha
+pne.recp		is alpha
+pne.attend		is alpha
+pne.caredur		is binary
+pne.status		is alpha
+
+pne.sac.rec		is header
+pne.sac			is binary
+pne.ru.rec		is header
+pne.ru			is binary
+pne.con.rec		is header
+pne.con.sac		is binary
+pne.group		is alpha
+pne.sup.req		is alpha
+pne.sup.diff	is alpha
+
+pne.ua.req		is alpha
+pne.sp			is alpha
+pne.alt.sac		is binary
+pne.tp.req		is alpha
+'************************************PROCEDURE SECTION********************
+$trace("path","tracelist") 
+'$trace("watch", ev_time, cldur[cnt], ev_date[cnt], cl_id, ProcCode, user_f3[cnt])
+$trace("on")
+
+	$form("pnelist")
+		$table("d1")
+			$style("sb3")
+			$row()
+				$col("left",,,"1","1")
+				$text("ID")
+				$col("left",,,"1","1")
+				$text("Note Type")
+				$col("right",,,"1","1")
+				$text("Description")
+				$col("right",,,"1","1")
+				$text("SAC")
+				$col("right",,,"1","1")
+				$text("Supervisor")
+				$col("right",,,"1","1")
+				$text("Sup Diff")
+				$col("right",,,"1","1")
+				$text("UA req")
+				$col("right",,,"1","1")
+				$text("Alt Sac")
+				$col("right",,,"1","1")
+				$text("PNE status")								
+				$col("right",,,"1","1")
+				$text("PNE SP")	
+	rc = $dbstart(59)
+'	rc = $dbreadnext(59, pne.id, pne.type, pne.desc, pne.sup.req, pne.sup.diff, pne.sac.rec, pne.sac)
+	rc = $dbreadnext(59, pne.id,pne.type, pne.desc, pne.sup.req, pne.sup.diff, pne.carecode, 
+						 pne.status, pne.clstdur, pne.maxdur, pne.minbill,
+						 pne.sac.rec, pne.sac, pne.ru.rec, pne.ru,
+						 pne.ua.req, pne.sp, pne.alt.sac, pne.tp.req)
+	do while rc < 3
+'		if  pne.type = "MHAHLNE" then
+'			goto DONE
+'			return
+'		endif			
+'		rc = $dbreadnext(59, pne.id, pne.type, pne.desc, pne.sup.req, pne.sup.diff, pne.sac.rec, pne.sac)
+ 	rc = $dbreadnext(59, pne.id,pne.type, pne.desc, pne.sup.req, pne.sup.diff, pne.carecode, 
+						 pne.status, pne.clstdur, pne.maxdur, pne.minbill,
+						 pne.sac.rec, pne.sac, pne.ru.rec, pne.ru,
+						 pne.ua.req, pne.sp, pne.alt.sac, pne.tp.req)
+			$style("sb2")
+			$row()
+				$col("left",,,"1","1")
+				$text(pne.id)
+				$col("left",,,"1","1")
+				$text(pne.type)
+				$col("right",,,"1","1")
+				$text(pne.desc)
+				$col("right",,,"1","1")				
+				$text(pne.sac)	
+				$col("right",,,"1","1")				
+				$text(pne.sup.req)
+				$col("right",,,"1","1")
+				$text(pne.sup.diff)
+				$col("right",,,"1","1")
+				$text(pne.ua.req)
+				$col("right",,,"1","1")
+				$text(pne.alt.sac)
+				$col("right",,,"1","1")
+				$text(pne.status)
+				$col("right",,,"1","1")
+				$text(pne.sp)
+		$endtable("d1")
+
+	enddo
+DONE:
+'$trace("off")
+	$sendform("pnelist")		
+	$endform("pnelist")
+end pne_list
