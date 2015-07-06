@@ -158,19 +158,32 @@ dynamic FUNCTION is_super_md(sstaff_id) is alpha
    sstaff_id   is alpha
    rc          is binary
    s.discip    is alpha
+   stat        is alpha
    staff_type  is alpha
    credential  is alpha
    
    rc = $dbread(3, sstaff_id, s.discip)
-   rc = $dcv(60, s.discip, , staff_type)
+   rc = $dcv(60, s.discip, stat, staff_type)
    credential = $left(staff_type, 2)
+
+   is_super_md = "N"
    
-   select credential
-      case "MD" or "DO"
+   'if the credential code is inactive do not continue
+   if stat = "I" then
+      return
+   endif
+
+   'allow APNs to be supervisors
+   if staff_type = "APN" then
+      is_super_md = "Y"
+      return
+   endif
+
+   'otherwise only doctors can be supervisors
+   if credential = "MD" or credential = "DO" then
          is_super_md = "Y"
-      case other
-         is_super_md = "N"
-   endselect
+         return
+   endif
 end is_super_md
 
 dynamic FUNCTION is_super_ther(sstaff_id) is alpha
